@@ -1,4 +1,4 @@
-import time, datetime as dt
+import time, os, json, datetime as dt
 import pandas as pd, pyotp, streamlit as st
 from SmartApi import SmartConnect
 import config as C, strategy as S
@@ -10,18 +10,33 @@ cap = st.sidebar.number_input("Capital (₹)", 5000, 5000000, C.CAPITAL, 5000)
 risk = st.sidebar.slider("Risk per trade (%)", 0.25, 3.0, C.RISK_PCT, 0.25)
 if st.sidebar.button("🔄 Capture Live OI Snapshot"):
     st.cache_data.clear()
+    st.cache_resource.clear()
 
 @st.cache_resource
 def angel_login():
-    api = SmartConnect(api_key=C.API_KEY)
-    r = api.generateSession(C.CLIENT_CODE, C.PIN, pyotp.TOTP(C.TOTP_SECRET).now())
-    if not r or not r.get("status"):
-        raise RuntimeError(f"Login failed: {r}")
-    return api
+    try:
+        if not C.API_KEY or not C.CLIENT_CODE or not C.PIN or not C.TOTP_SECRET:
+            raise RuntimeError("Streamlit Secrets (API_KEY, CLIENT_CODE, MPIN, TOTP_SECRET) are empty!")
+        api = SmartConnect(api_key=C.API_KEY)
+        r = api.generateSession(C.CLIENT_CODE, C.PIN, pyotp.TOTP(C.TOTP_SECRET).now())
+        if not r or not r.get("status"):
+            raise RuntimeError(f"Angel Login Failed: {r}")
+        return api
+    except Exception as e:
+        raise RuntimeError(f"Login Error: {e}")
 
 @st.cache_data(ttl=86400)
 def get_master():
-    df = pd.read_json("master.json")
+    if not os.path.exists("master.json"):
+        raise RuntimeError("master.json file not found on GitHub!")
+    size_kb = os.path.getsize("master.json") / 1024
+    if size_kb < 500:
+        with open("master.json", "r", encoding="utf-8", errors="ignore") as f:
+            preview = f.read(150)
+        raise RuntimeError(f"master.json is invalid/corrupted (Size: {size_kb:.1f} KB). Content starts with: {preview}")
+    with open("master.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+    df = pd.DataFrame(data)
     return df[(df.exch_seg == "NFO") | ((df.exch_seg == "NSE") & (df.symbol.str.endswith("-EQ")))]
 
 def fetch_quotes(api, exch, tokens, mode="FULL"):
@@ -79,7 +94,7 @@ try:
         st.info(f"⏳ Snapshot #1 Captured for **{len(df_snap)} F&O Stocks & Indices**! Click **'🔄 Capture Live OI Snapshot'** once more (after 1 min in live market) to see live OI Change Flow.")
         st.dataframe(df_snap.rename(columns={"CE": "Total Call OI", "PE": "Total Put OI"}), use_container_width=True)
     else:
-        t0, old_oi = st.session_state.oi_history[0]
+        t0, old_oi = st.session_state.oi_history
         t1, new_oi = st.session_state.oi_history[-1]
         diff = (new_oi - old_oi).fillna(0)
         diff["score"] = [S.flow_score(r.get("CE", 0), r.get("PE", 0)) for _, r in diff.iterrows()]
