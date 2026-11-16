@@ -1,220 +1,103 @@
-import requests, pyotp
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import ta
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import time, datetime as dt
+import pandas as pd, pyotp, requests, streamlit as st
 from SmartApi import SmartConnect
+import config as C, strategy as S
 
-st.set_page_config(page_title="TradeFinder Pro", page_icon="💠", layout="wide")
+st.set_page_config(page_title="TradeFlow Pro (All F&O Option-OI)", page_icon="⚡", layout="wide")
+st.title("⚡ TradeFlow – All NSE F&O Option-OI Flow Scanner")
 
-if "theme_mode" not in st.session_state: st.session_state.theme_mode = "Dark"
-if "chart_plat" not in st.session_state: st.session_state.chart_plat = "TradingView"
+cap = st.sidebar.number_input("Capital (₹)", 5000, 5000000, C.CAPITAL, 5000)
+risk = st.sidebar.slider("Risk per trade (%)", 0.25, 3.0, C.RISK_PCT, 0.25)
+if st.sidebar.button("🔄 Capture Live OI Snapshot"): st.cache_data.clear()
 
-if st.session_state.theme_mode == "Dark":
-    st.markdown("<style>.stApp{background-color:#0b0f19;color:#f8fafc}div[data-testid='stMetric']{background-color:#131a2a;border:1px solid #1e293b;padding:10px;border-radius:10px}</style>", unsafe_allow_html=True)
-    p_bg, p_temp = "#0b0f19", "plotly_dark"
-else:
-    st.markdown("<style>.stApp{background-color:#f8fafc;color:#0f172a}section[data-testid='stSidebar']{background-color:#ffffff}div[data-testid='stMetric']{background-color:#ffffff;border:1px solid #cbd5e1;padding:10px;border-radius:10px;color:#0f172a}h1,h2,h3,h4,p,span,label{color:#0f172a !important}</style>", unsafe_allow_html=True)
-    p_bg, p_temp = "#f8fafc", "plotly_white"
-
-st.sidebar.markdown("## 💠 TradeFinder Pro")
-st.sidebar.success("🔴 LIVE (Auto-Updates 5s)")
-page = st.sidebar.radio("MENU", ["📊 Sector Scope", "⚡ Market Pulse", "🔥 Insider Strategy (Heatmap)", "📈 Swing Spectrum", "🕯️ Live Chart & Risk", "⚙️ Settings"])
-st.sidebar.divider()
-cap = st.sidebar.number_input("Total Capital (₹)", 5000, 5000000, 30000, 5000)
-risk_pct = st.sidebar.slider("Max Risk / Trade (%)", 0.5, 5.0, 1.0, 0.5)
-rr = st.sidebar.selectbox("Risk : Reward", [1.5, 2.0, 2.5, 3.0], index=1)
-tf = st.sidebar.selectbox("Timeframe", ["5m", "15m", "1h"], index=0)
-
-SEC_MAP = {
-    "HDFCBANK":"Banking","ICICIBANK":"Banking","SBIN":"Banking","AXISBANK":"Banking","KOTAKBANK":"Banking","INDUSINDBK":"Banking","BANKBARODA":"Banking","PNB":"Banking","CANBK":"Banking","FEDERALBNK":"Banking","IDFCFIRSTB":"Banking","AUBANK":"Banking",
-    "BAJFINANCE":"Finance","BAJAJFINSV":"Finance","CHOLAFIN":"Finance","SHRIRAMFIN":"Finance","PFC":"Finance","RECLTD":"Finance","SBILIFE":"Finance","HDFCLIFE":"Finance","JIOFIN":"Finance","MUTHOOTFIN":"Finance","ICICIGI":"Finance",
-    "TCS":"IT","INFY":"IT","WIPRO":"IT","HCLTECH":"IT","TECHM":"IT","LTIM":"IT","PERSISTENT":"IT","COFORGE":"IT","MPHASIS":"IT","KPITTECH":"IT","TATAELXSI":"IT",
-    "RELIANCE":"Energy","ONGC":"Energy","NTPC":"Energy","POWERGRID":"Energy","COALINDIA":"Energy","TATAPOWER":"Energy","ADANIGREEN":"Energy","BPCL":"Energy","IOC":"Energy","GAIL":"Energy","NHPC":"Energy",
-    "TATAMOTORS":"Auto","MARUTI":"Auto","M&M":"Auto","BAJAJ-AUTO":"Auto","EICHERMOT":"Auto","TVSMOTOR":"Auto","ASHOKLEY":"Auto","HEROMOTOCO":"Auto","BHARATFORG":"Auto","MOTHERSON":"Auto",
-    "SUNPHARMA":"Pharma","CIPLA":"Pharma","DRREDDY":"Pharma","DIVISLAB":"Pharma","APOLLOHOSP":"Pharma","LUPIN":"Pharma","AUROPHARMA":"Pharma","TORNTPHARM":"Pharma","ZYDUSLIFE":"Pharma","MAXHEALTH":"Pharma",
-    "TATASTEEL":"Metal","HINDALCO":"Metal","JSWSTEEL":"Metal","VEDL":"Metal","JINDALSTEL":"Metal","NMDC":"Metal","SAIL":"Metal","NATIONALUM":"Metal","HINDCOPPER":"Metal",
-    "ITC":"FMCG","HINDUNILVR":"FMCG","NESTLEIND":"FMCG","BRITANNIA":"FMCG","TATACONSUM":"FMCG","VBL":"FMCG","GODREJCP":"FMCG","DABUR":"FMCG","MARICO":"FMCG",
-    "LT":"Infra & Defence","ADANIENT":"Infra & Defence","ADANIPORTS":"Infra & Defence","HAL":"Infra & Defence","BEL":"Infra & Defence","BHEL":"Infra & Defence","MAZDOCK":"Infra & Defence","SIEMENS":"Infra & Defence","ABB":"Infra & Defence",
-    "DLF":"Realty","GODREJPROP":"Realty","OBEROIRLTY":"Realty","LODHA":"Realty","TITAN":"Consumer","TRENT":"Consumer","ZOMATO":"Consumer","ETERNAL":"Consumer","DIXON":"Consumer","INDIGO":"Consumer","IRCTC":"Consumer","BHARTIARTL":"Telecom"
-}
+@st.cache_resource
+def angel_login():
+    api = SmartConnect(api_key=C.API_KEY)
+    r = api.generateSession(C.CLIENT_CODE, C.PIN, pyotp.TOTP(C.TOTP_SECRET).now())
+    if not r.get("status"): raise RuntimeError(f"Login failed: {r.get('message')}")
+    return api
 
 @st.cache_data(ttl=86400)
-def get_tokens():
-    tmap = {}
-    try:
-        for r in requests.get("https://angelbroking.com", timeout=25).json():
-            if r.get("exch_seg") == "NSE" and str(r.get("symbol", "")).endswith("-EQ"): tmap[r["name"]] = str(r["token"])
-    except Exception: pass
-    return tmap
+def get_master():
+    res = requests.get("https://angelbroking.com", timeout=45).json()
+    return pd.DataFrame(res)
 
-@st.cache_data(ttl=60)
-def get_indices():
-    res = {}
-    for n, s in {"NIFTY 50":"^NSEI","BANK NIFTY":"^NSEBANK","INDIA VIX":"^INDIAVIX","DAX":"^GDAXI","DOW":"^DJI","BTC":"BTC-USD"}.items():
-        try:
-            d = yf.download(s, period="2d", interval="1d", progress=False)
-            if isinstance(d.columns, pd.MultiIndex): d.columns = d.columns.get_level_values(0)
-            p, c = float(d['Close'].iloc[-2]), float(d['Close'].iloc[-1])
-            res[n] = (round(c, 2), round(((c - p) / p) * 100, 2))
-        except Exception: pass
-    return res
+def fetch_quotes(api, exch, tokens, mode="FULL"):
+    out = []
+    for i in range(0, len(tokens), 50):
+        time.sleep(0.45)
+        r = api.getMarketData(mode, {exch: tokens[i:i+50]})
+        if r and r.get("status"): out += r["data"].get("fetched", [])
+    return out
 
-@st.cache_data(ttl=600)
-def load_base(t):
-    stocks = list(SEC_MAP.keys())
-    tickers = [f"{s}.NS" for s in stocks]
-    intra_l, daily_l = [], []
-    for i in range(0, len(tickers), 50):
-        ch = tickers[i:i+50]
-        intra_l.append(yf.download(ch, period="5d", interval=t, group_by='ticker', progress=False, threads=True))
-        daily_l.append(yf.download(ch, period="55d", interval="1d", group_by='ticker', progress=False, threads=True))
-    intra, daily = pd.concat(intra_l, axis=1), pd.concat(daily_l, axis=1)
-    tech, charts = {}, {}
-    cols = intra.columns.get_level_values(0) if isinstance(intra.columns, pd.MultiIndex) else []
-    for name in stocks:
-        try:
-            ysym = f"{name}.NS"
-            if ysym not in cols: continue
-            df, ddf = intra[ysym].dropna().copy(), daily[ysym].dropna().copy()
-            if len(df) < 20 or len(ddf) < 5: continue
-            df['EMA_20'] = ta.trend.ema_indicator(df['Close'], window=20)
-            df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
-            df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
-            tp = (df['High'] + df['Low'] + df['Close']) / 3.0
-            df['VWAP'] = ((tp * df['Volume']).rolling(14).sum() / df['Volume'].rolling(14).sum()).fillna(df['EMA_20'])
-            charts[name] = df
-            avg_v, cur_v = float(df['Volume'].tail(20).mean()), float(df['Volume'].iloc[-1])
-            vol_b = round(cur_v / avg_v, 2) if avg_v > 0 else 1.0
-            h10 = float(ddf['High'].iloc[-11:-1].max())
-            h50 = float(ddf['High'].iloc[-51:-1].max()) if len(ddf) >= 51 else h10
-            tech[name] = {"sec":SEC_MAP[name],"ema":float(df['EMA_20'].iloc[-1]),"vwap":float(df['VWAP'].iloc[-1]),"rsi":float(df['RSI'].iloc[-1]),"atr":float(df['ATR'].iloc[-1]),"vol_b":vol_b,"open":float(ddf['Open'].iloc[-1]),"high":float(ddf['High'].iloc[-1]),"low":float(ddf['Low'].iloc[-1]),"prev_c":float(ddf['Close'].iloc[-2]),"ltp":float(df['Close'].iloc[-1]),"h10":h10,"h50":h50}
-        except Exception: pass
-    return tech, charts
-def get_live_df(tech, c, r_pct, ratio):
-    tmap = get_tokens()
-    quotes, status = {}, "Yahoo Feed 🟡"
-    ak, cc, mp, ts = st.secrets.get("API_KEY",""), st.secrets.get("CLIENT_CODE",""), st.secrets.get("MPIN",""), st.secrets.get("TOTP_SECRET","")
-    if ak and cc and mp and ts and tmap:
-        try:
-            api = SmartConnect(api_key=ak)
-            if api.generateSession(cc, mp, pyotp.TOTP(ts).now())['status']:
-                tokens = [tmap[s] for s in tech.keys() if s in tmap]
-                for i in range(0, len(tokens), 50):
-                    q = api.getMarketData("OHLC", {"NSE": tokens[i:i+50]})
-                    if q and q.get("status") and "fetched" in q.get("data", {}):
-                        for it in q["data"]["fetched"]: quotes[str(it["symbolToken"])] = it
-                status = f"Angel One 0-Sec Live ({len(quotes)} F&O) 🟢"
-        except Exception: pass
-    rows, max_risk = [], (c * r_pct) / 100.0
-    for name, td in tech.items():
-        tok = tmap.get(name, "")
-        opn, high, low, prev_c, ltp = td["open"], td["high"], td["low"], td["prev_c"], td["ltp"]
-        if tok in quotes:
-            qi = quotes[tok]
-            if float(qi.get("ltp",0))>0: ltp = float(qi["ltp"])
-            if float(qi.get("open",0))>0: opn = float(qi["open"])
-            if float(qi.get("high",0))>0: high = float(qi["high"])
-            if float(qi.get("low",0))>0: low = float(qi["low"])
-            if float(qi.get("close",0))>0: prev_c = float(qi["close"])
-        chg = ((ltp - prev_c) / prev_c) * 100 if prev_c > 0 else 0
-        sl_pts = max(1.5 * td["atr"], ltp * 0.004)
-        qty = max(1, int(max_risk / sl_pts))
-        if ltp > td["ema"] and ltp > td["vwap"] and chg > 0.25: sig, sl, tgt = "🟢 BUY", round(ltp - sl_pts, 2), round(ltp + (sl_pts * ratio), 2)
-        elif ltp < td["ema"] and ltp < td["vwap"] and chg < -0.25: sig, sl, tgt = "🔴 SELL", round(ltp + sl_pts, 2), round(ltp - (sl_pts * ratio), 2)
-        else: sig, sl, tgt, qty = "⚪ WAIT", "-", "-", "-"
-        tv_s = name.replace("&", "_").replace("-", "_")
-        c_url = f"https://tradingview.com:{tv_s}" if st.session_state.chart_plat == "TradingView" else "https://angelone.in"
-        rows.append({"Stock":name,"Chart":c_url,"Sector":td["sec"],"LTP":round(ltp,2),"Chg %":round(chg,2),"Open":round(opn,2),"High":round(high,2),"Low":round(low,2),"Signal":sig,"Qty":qty,"SL":sl,"Target":tgt,"Boost (x)":td["vol_b"],"RSI":round(td["rsi"],1),"VWAP":round(td["vwap"],2),"BO10":ltp>=td["h10"]*0.995,"BO50":ltp>=td["h50"]*0.995})
-    return pd.DataFrame(rows), status
+def get_contracts(m, und, spot, n_strikes):
+    typ = "OPTIDX" if und in C.INDEX_TOKENS else "OPTSTK"
+    o = m[(m.exch_seg == "NFO") & (m.name == und) & (m.instrumenttype == typ)].copy()
+    if o.empty: return o
+    o["exp"] = pd.to_datetime(o.expiry, format="%d%b%Y")
+    o = o[o.exp >= pd.Timestamp.today().normalize()]
+    o = o[o.exp == o.exp.min()]; o["k"] = o.strike.astype(float) / 100
+    strikes = sorted(o.k.unique())
+    if not strikes: return o.iloc[0:0]
+    atm = min(strikes, key=lambda x: abs(x - spot)); i = strikes.index(atm)
+    o = o[o.k.isin(strikes[max(0, i - n_strikes): i + n_strikes + 1])]
+    o["cp"] = o.symbol.str[-2:]
+    return o[["token", "symbol", "k", "cp"]]
 
-idx = get_indices()
-if idx:
-    cols = st.columns(len(idx))
-    for i, (k, (v, ch)) in enumerate(idx.items()): cols[i].metric(k, f"{v:,}", f"{ch}%")
+if "oi_history" not in st.session_state: st.session_state.oi_history = []
 
-tech_data, charts = load_base(tf)
-link_cfg = {"Chart": st.column_config.LinkColumn("Chart", display_text="📈 Open")}
+try:
+    api = angel_login()
+    m = get_master()
+    all_fno_names = sorted(m[(m.exch_seg == "NFO") & (m.instrumenttype == "FUTSTK")].name.unique())
+    eq_df = m[(m.exch_seg == "NSE") & (m.symbol.str.endswith("-EQ"))]
+    eq_map = dict(zip(eq_df.name, eq_df.token.astype(str)))
+    unders = list(C.INDEX_TOKENS) + all_fno_names
+    sp_tokens = {u: (C.INDEX_TOKENS.get(u) or eq_map.get(u)) for u in unders if (C.INDEX_TOKENS.get(u) or eq_map.get(u))}
 
-@st.fragment(run_every=5)
-def render_live_workspace():
-    df, status = get_live_df(tech_data, cap, risk_pct, rr)
-    c_h, c_b = st.columns([4, 1])
-    c_h.caption(f"Feed: **{status}** | Click **'📈 Open'** in any table to launch {st.session_state.chart_plat} directly!")
-    if c_b.button("🔄 Reset Cache", use_container_width=True): st.cache_data.clear()
+    with st.spinner(f"Scanning Live Option OI for ALL {len(all_fno_names)} F&O Stocks..."):
+        q_spot = fetch_quotes(api, "NSE", list(sp_tokens.values()), "LTP")
+        tok2u = {v: k for k, v in sp_tokens.items()}
+        spot = {tok2u[str(x["symbolToken"])]: float(x["ltp"]) for x in q_spot if str(x["symbolToken"]) in tok2u}
+        contracts = [get_contracts(m, u, p, 5 if u in C.INDEX_TOKENS else 1).assign(und=u) for u, p in spot.items()]
+        allc = pd.concat([c for c in contracts if not c.empty])
+        info = allc.set_index("token")
+        q_oi = fetch_quotes(api, "NFO", list(allc.token.astype(str)), "FULL")
+        snap = []
+        for x in q_oi:
+            tk = str(x["symbolToken"])
+            if tk in info.index:
+                r = info.loc[tk]
+                snap.append({"und": r.und, "cp": r.cp, "oi": float(x.get("opnInterest", 0))})
+        df_snap = pd.DataFrame(snap).groupby(["und", "cp"]).oi.sum().unstack(fill_value=0)
+        st.session_state.oi_history.append((dt.datetime.now().strftime("%H:%M:%S"), df_snap))
+        if len(st.session_state.oi_history) > 30: st.session_state.oi_history.pop(0)
 
-    if not df.empty:
-        if page == "📊 Sector Scope":
-            st.subheader("📊 Sector Scope (Institutional Buying & Selling Flow)")
-            sec_df = df.groupby("Sector").agg(Avg_Chg=("Chg %", "mean"), Vol_Boost=("Boost (x)", "mean"), Stocks=("Stock", "count")).reset_index().sort_values("Avg_Chg", ascending=False)
-            sec_df["Avg_Chg"] = sec_df["Avg_Chg"].round(2)
-            fig_bar = px.bar(sec_df, x="Sector", y="Avg_Chg", color="Avg_Chg", color_continuous_scale=['#ef4444', '#22c55e'], text="Avg_Chg")
-            fig_bar.update_layout(height=340, paper_bgcolor=p_bg, template=p_temp)
-            st.plotly_chart(fig_bar, use_container_width=True)
-            sec_sel = st.selectbox("🔍 Select Sector to View All Stocks:", sec_df["Sector"].tolist())
-            st.dataframe(df[df["Sector"] == sec_sel].sort_values("Chg %", ascending=False)[["Stock","Chart","LTP","Chg %","Boost (x)","VWAP","RSI","Signal","Qty","SL","Target"]], column_config=link_cfg, use_container_width=True, hide_index=True)
+    if len(st.session_state.oi_history) < 2:
+        st.info(f"⏳ Snapshot #1 Captured for **{len(df_snap)} F&O Stocks & Indices**! Click **'🔄 Capture Live OI Snapshot'** once more (after 1 min in live market) to see live OI Change Flow.")
+        st.dataframe(df_snap.rename(columns={"CE": "Total Call OI", "PE": "Total Put OI"}), use_container_width=True)
+    else:
+        t0, old_oi = st.session_state.oi_history[0]
+        t1, new_oi = st.session_state.oi_history[-1]
+        diff = (new_oi - old_oi).fillna(0)
+        diff["score"] = [S.flow_score(r.get("CE", 0), r.get("PE", 0)) for _, r in diff.iterrows()]
+        diff["bias"] = diff.score.map(S.bias_label)
+        st.caption(f"Live OI Flow Window: **{t0} ➔ {t1}** | Total Scanned: **{len(diff)} F&O Underlyings**")
 
-        elif page == "⚡ Market Pulse":
-            b1, b2 = st.columns(2)
-            b1.subheader("💥 Intraday Boost (Volume Spike)")
-            b1.dataframe(df.sort_values("Boost (x)", ascending=False).head(15)[["Stock","Chart","LTP","Chg %","Boost (x)","Signal","Qty","SL","Target"]], column_config=link_cfg, use_container_width=True, hide_index=True)
-            b2.subheader("🎯 Breakout Beacon (EMA + VWAP)")
-            b2.dataframe(df[df["Signal"] != "⚪ WAIT"].sort_values("Boost (x)", ascending=False).head(15)[["Stock","Chart","LTP","Chg %","RSI","Signal","Qty","SL","Target"]], column_config=link_cfg, use_container_width=True, hide_index=True)
-            st.divider()
-            c1, c2 = st.columns(2)
-            c1.subheader("🚀 Top 20 Gainers")
-            c1.dataframe(df.sort_values("Chg %", ascending=False).head(20)[["Stock","Chart","LTP","Chg %","Open","High","Low","Signal","Qty","SL","Target"]], column_config=link_cfg, use_container_width=True, hide_index=True)
-            c2.subheader("📉 Top 20 Losers")
-            c2.dataframe(df.sort_values("Chg %", ascending=True).head(20)[["Stock","Chart","LTP","Chg %","Open","High","Low","Signal","Qty","SL","Target"]], column_config=link_cfg, use_container_width=True, hide_index=True)
+        mk = {u: diff.loc[u] for u in C.INDEX_TOKENS if u in diff.index}
+        cols = st.columns(len(mk) or 1)
+        for col, (u, r) in zip(cols, mk.items()): col.metric(f"{u} Option Flow", r.bias, f"Score: {r.score:+.2f}")
 
-        elif page == "🔥 Insider Strategy (Heatmap)":
-            st.subheader("🔥 Live Momentum Spike Heatmap")
-            df["Box"] = df["Chg %"].abs() + 0.3
-            fig = px.treemap(df, path=['Sector', 'Stock'], values='Box', color='Chg %', color_continuous_scale=['#ef4444', '#64748b', '#22c55e'], color_continuous_midpoint=0, hover_data=['LTP','Boost (x)','Signal'])
-            fig.update_layout(height=550, margin=dict(t=10,l=10,r=10,b=10), paper_bgcolor=p_bg)
-            st.plotly_chart(fig, use_container_width=True)
+        st.subheader("📊 Sector Option-OI Flow")
+        stk = diff[diff.index.isin(all_fno_names)].copy()
+        stk["Sector"] = stk.index.map(lambda x: C.SYMBOL_SECTOR.get(x, "Midcap / Other F&O"))
+        sec = stk.groupby("Sector").agg(Flow_Score=("score", "mean"), Stocks=("score", "size")).sort_values("Flow_Score", ascending=False)
+        sec["Bias"] = sec.Flow_Score.map(S.bias_label)
+        st.dataframe(sec.round(2), use_container_width=True)
 
-        elif page == "📈 Swing Spectrum":
-            s1, s2 = st.columns(2)
-            s1.subheader("🔥 10-Day High Breakout")
-            s1.dataframe(df[df["BO10"]][["Stock","Chart","Sector","LTP","Chg %","RSI","Signal"]], column_config=link_cfg, use_container_width=True, hide_index=True)
-            s2.subheader("🚀 50-Day High Breakout")
-            s2.dataframe(df[df["BO50"]][["Stock","Chart","Sector","LTP","Chg %","RSI","Signal"]], column_config=link_cfg, use_container_width=True, hide_index=True)
-
-        elif page == "🕯️ Live Chart & Risk":
-            sel_s = st.selectbox("Select Stock:", sorted(df["Stock"].tolist()))
-            ri = df[df["Stock"] == sel_s].iloc[0]
-            m = st.columns(6)
-            m[0].metric("LTP", f"₹{ri['LTP']}", f"{ri['Chg %']}%")
-            m[1].metric("VWAP", f"₹{ri['VWAP']}")
-            m[2].metric("Signal", ri['Signal'])
-            m[3].metric("Safe Qty", f"{ri['Qty']}")
-            m[4].metric("Stop-Loss", f"₹{ri['SL']}")
-            m[5].metric("Target", f"₹{ri['Target']}")
-            if sel_s in charts:
-                cdf = charts[sel_s].tail(75)
-                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.72, 0.28])
-                fig.add_trace(go.Candlestick(x=cdf.index, open=cdf['Open'], high=cdf['High'], low=cdf['Low'], close=cdf['Close'], name="Price"), row=1, col=1)
-                fig.add_trace(go.Scatter(x=cdf.index, y=cdf['EMA_20'], mode='lines', line=dict(color='#f59e0b', width=2), name="20 EMA"), row=1, col=1)
-                fig.add_trace(go.Scatter(x=cdf.index, y=cdf['VWAP'], mode='lines', line=dict(color='#8b5cf6', width=2, dash='dot'), name="VWAP"), row=1, col=1)
-                fig.add_trace(go.Scatter(x=cdf.index, y=cdf['RSI'], mode='lines', line=dict(color='#0284c7', width=1.8), name="RSI"), row=2, col=1)
-                fig.update_layout(height=520, xaxis_rangeslider_visible=False, template=p_temp, paper_bgcolor=p_bg)
-                st.plotly_chart(fig, use_container_width=True)
-
-        elif page == "⚙️ Settings":
-            s1, s2 = st.columns(2)
-            with s1:
-                nt = st.radio("Display Mode", ["Dark", "Light"], index=0 if st.session_state.theme_mode=="Dark" else 1)
-                if nt != st.session_state.theme_mode:
-                    st.session_state.theme_mode = nt
-                    st.rerun()
-            with s2:
-                np = st.radio("Chart Platform", ["TradingView", "Angel One"], index=0 if st.session_state.chart_plat=="TradingView" else 1)
-                if np != st.session_state.chart_plat:
-                    st.session_state.chart_plat = np
-                    st.rerun()
-
-render_live_workspace()
+        st.subheader(f"🔥 All {len(stk)} F&O Stocks Option-OI Flow (Strongest Movers First)")
+        stk["TV_Chart"] = [f"https://tradingview.com:{s.replace('&','_').replace('-','_')}" for s in stk.index]
+        st.dataframe(stk.sort_values("score", key=abs, ascending=False)[["Sector", "TV_Chart", "CE", "PE", "score", "Bias"]].rename(columns={"CE":"Δ Call OI","PE":"Δ Put OI","score":"Flow Score"}).round(2),
+                     column_config={"TV_Chart": st.column_config.LinkColumn("Chart", display_text="📈 Open")}, use_container_width=True, height=550)
+except Exception as e:
+    st.error(f"Error: {e}")
