@@ -6,18 +6,18 @@ import pyotp
 import plotly.graph_objects as go
 from SmartApi import SmartConnect
 
-st.set_page_config(page_title="My TradeFinder", layout="wide")
-st.title("🚀 મારું પર્સનલ TradeFinder (Auto-Connected)")
+st.set_page_config(page_title="My TradeFinder Pro", layout="wide")
+st.title("🚀 Personal TradeFinder Pro (Live Market Scanner)")
 
-# Secrets માંથી ઓટોમેટિક વિગતો લેવી
+# Auto-load credentials from Streamlit Secrets
 api_key = st.secrets.get("API_KEY", "")
 client_code = st.secrets.get("CLIENT_CODE", "")
 mpin = st.secrets.get("MPIN", "")
 totp_secret = st.secrets.get("TOTP_SECRET", "")
 
-st.sidebar.header("⚙️ ટ્રેડિંગ સેટિંગ્સ")
-timeframe = st.sidebar.selectbox("ટાઈમફ્રેમ પસંદ કરો", ["5m", "15m", "1h"], index=1)
-risk_reward = st.sidebar.slider("Risk : Reward રેશિયો", 1.5, 4.0, 2.0, 0.5)
+st.sidebar.header("⚙️ Trading Settings")
+timeframe = st.sidebar.selectbox("Select Timeframe", ["5m", "15m", "1h"], index=1)
+risk_reward = st.sidebar.slider("Risk : Reward Ratio", 1.5, 4.0, 2.0, 0.5)
 
 stock_map = {
     "RELIANCE.NS": ("RELIANCE-EQ", "2885"),
@@ -46,7 +46,7 @@ def get_market_data(tf):
             if session['status']:
                 st.sidebar.success("Angel One Live Connected! 🟢")
             else:
-                st.sidebar.warning("Angel One લોગિન ચેક કરો (Yahoo ડેટા ચાલુ છે)")
+                st.sidebar.warning("Check Angel One Credentials (Using Yahoo Data)")
                 smart_api = None
         except:
             smart_api = None
@@ -114,7 +114,7 @@ def get_market_data(tf):
 
     return pd.DataFrame(results), chart_data_dict
 
-if st.button("🔄 લાઈવ ડેટા રિફ્રેશ કરો"):
+if st.button("🔄 Refresh Live Data"):
     st.cache_data.clear()
 
 df_res, charts = get_market_data(timeframe)
@@ -131,8 +131,8 @@ if not df_res.empty:
         st.dataframe(losers[["Stock", "Live Price (₹)", "Change (%)", "Signal", "Stop-Loss (₹)", "Target (₹)"]], use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader("🕯️ લાઈવ કેન્ડલસ્ટિક ચાર્ટ અને 20 EMA ટ્રેન્ડ લાઈન")
-    selected_stock_name = st.selectbox("ચાર્ટ જોવા માટે સ્ટોક પસંદ કરો:", df_res["Stock"].tolist())
+    st.subheader("🕯️ Live Candlestick Chart & 20 EMA Trendline")
+    selected_stock_name = st.selectbox("Select Stock to View Chart:", df_res["Stock"].tolist())
     full_sym = selected_stock_name + ".NS"
 
     if full_sym in charts:
@@ -144,5 +144,5 @@ if not df_res.empty:
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
-    st.subheader("📋 તમામ સ્ટોક્સનું સિગ્નલ, Stop-Loss અને Target બોર્ડ")
+    st.subheader("📋 All Stocks Signal, Stop-Loss & Target Board")
     st.dataframe(df_res.drop(columns=["Full_Symbol"]), use_container_width=True, hide_index=True)
