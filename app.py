@@ -36,7 +36,6 @@ client_code = st.secrets.get("CLIENT_CODE", "")
 mpin = st.secrets.get("MPIN", "")
 totp_secret = st.secrets.get("TOTP_SECRET", "")
 
-# Sidebar Settings
 st.sidebar.header("💰 Risk & Capital Manager")
 total_capital = st.sidebar.number_input("Total Capital (₹)", min_value=5000, value=30000, step=5000)
 risk_per_trade_pct = st.sidebar.slider("Max Risk Per Trade (%)", 0.5, 5.0, 1.0, 0.5)
@@ -47,15 +46,13 @@ st.sidebar.divider()
 auto_live = st.sidebar.toggle("🔴 Auto-Live Mode (30s Refresh)", value=False)
 st.sidebar.caption("Scanning ALL ~200+ NSE F&O (Option Chain) Stocks automatically.")
 
-# Top Header
-c_title, c_btn = st.columns([4, 1])
+c_title, c_btn = st.columns()
 with c_title:
     st.markdown("### 💠 TradeFinder Pro Live (All NSE Option Chain / F&O Stocks)")
 with c_btn:
     if st.button("🔄 Sync All F&O", use_container_width=True):
         st.cache_data.clear()
 
-# Sector Mapping for F&O Universe
 SECTOR_MAP = {
     "HDFCBANK": "Banking", "ICICIBANK": "Banking", "SBIN": "Banking", "AXISBANK": "Banking", "KOTAKBANK": "Banking",
     "INDUSINDBK": "Banking", "BANKBARODA": "Banking", "PNB": "Banking", "CANBK": "Banking", "FEDERALBNK": "Banking",
@@ -93,13 +90,11 @@ SECTOR_MAP = {
 
 @st.cache_data(ttl=86400)
 def get_all_fno_universe():
-    """Fetches all active NSE F&O (Option Chain) stocks dynamically from Angel One Scrip Master"""
     fno_dict = {}
     try:
         url = "https://angelbroking.com"
         res = requests.get(url, timeout=15).json()
         df_master = pd.DataFrame(res)
-        # Filter active NFO stock futures/options underlying names
         nfo_stocks = df_master[(df_master['exch_seg'] == 'NFO') & (df_master['instrumenttype'] == 'FUTSTK')]['name'].unique()
         nse_eq = df_master[(df_master['exch_seg'] == 'NSE') & (df_master['symbol'].str.endswith('-EQ'))]
         nse_eq_filtered = nse_eq[nse_eq['name'].isin(nfo_stocks)]
@@ -115,7 +110,6 @@ def get_all_fno_universe():
     except Exception:
         pass
 
-    # Fallback if Scrip Master fails
     if not fno_dict:
         for sym, sec in SECTOR_MAP.items():
             fno_dict[sym] = {"angel_sym": f"{sym}-EQ", "token": "", "y_sym": f"{sym}.NS", "sector": sec}
@@ -162,7 +156,6 @@ def scan_all_fno_stocks(tf, cap, risk_pct, rr):
             session = smart_api.generateSession(client_code, mpin, totp)
             if session['status']:
                 api_status = f"Angel One 0-Sec Live ({len(fno_universe)} F&O Stocks) 🟢"
-                # Batch fetch live market quotes (50 tokens per batch)
                 all_tokens = [v["token"] for v in fno_universe.values() if v["token"]]
                 for i in range(0, len(all_tokens), 50):
                     batch = all_tokens[i:i+50]
@@ -201,3 +194,9 @@ def scan_all_fno_stocks(tf, cap, risk_pct, rr):
 
             df['EMA_20'] = ta.trend.ema_indicator(df['Close'], window=20)
             df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
+            df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
+
+            tp = (df['High'] + df['Low'] + df['Close']) / 3.0
+            df['VWAP'] = (tp * df['Volume']).rolling(14).sum() / df['Volume'].rolling(14).sum()
+            df['VWAP'] = df['VWAP'].fillna(df['EMA_20'])
+
