@@ -1,13 +1,13 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import ta
 import pyotp
-import plotly.graph_objects as go
 from SmartApi import SmartConnect
 
 st.set_page_config(page_title="My TradeFinder Pro", layout="wide")
-st.title("🚀 Personal TradeFinder Pro (Live Market Scanner)")
+st.title("🚀 Personal TradeFinder Pro (Live Scanner & TradingView)")
 
 # Auto-load credentials from Streamlit Secrets
 api_key = st.secrets.get("API_KEY", "")
@@ -15,10 +15,11 @@ client_code = st.secrets.get("CLIENT_CODE", "")
 mpin = st.secrets.get("MPIN", "")
 totp_secret = st.secrets.get("TOTP_SECRET", "")
 
-st.sidebar.header("⚙️ Trading Settings")
-timeframe = st.sidebar.selectbox("Select Timeframe", ["5m", "15m", "1h"], index=1)
+st.sidebar.header("⚙️ Scanner Settings")
+timeframe = st.sidebar.selectbox("Scanner Timeframe", ["5m", "15m", "1h"], index=1)
 risk_reward = st.sidebar.slider("Risk : Reward Ratio", 1.5, 4.0, 2.0, 0.5)
 
+# Expanded 26 Top NSE Stocks List (Yahoo Symbol : (Angel Symbol, Token))
 stock_map = {
     "RELIANCE.NS": ("RELIANCE-EQ", "2885"),
     "TCS.NS": ("TCS-EQ", "11536"),
@@ -26,16 +27,31 @@ stock_map = {
     "INFY.NS": ("INFY-EQ", "1594"),
     "ICICIBANK.NS": ("ICICIBANK-EQ", "4963"),
     "SBIN.NS": ("SBIN-EQ", "3045"),
-    "TATAMOTORS.NS": ("TATAMOTORS-EQ", "3456"),
+    "BHARTIARTL.NS": ("BHARTIARTL-EQ", "10604"),
+    "ITC.NS": ("ITC-EQ", "1660"),
+    "LT.NS": ("LT-EQ", "11483"),
     "BAJFINANCE.NS": ("BAJFINANCE-EQ", "317"),
+    "TATAMOTORS.NS": ("TATAMOTORS-EQ", "3456"),
+    "SUNPHARMA.NS": ("SUNPHARMA-EQ", "3351"),
+    "MARUTI.NS": ("MARUTI-EQ", "10999"),
     "AXISBANK.NS": ("AXISBANK-EQ", "5900"),
-    "ADANIENT.NS": ("ADANIENT-EQ", "25")
+    "WIPRO.NS": ("WIPRO-EQ", "3787"),
+    "ADANIENT.NS": ("ADANIENT-EQ", "25"),
+    "TATASTEEL.NS": ("TATASTEEL-EQ", "3499"),
+    "NTPC.NS": ("NTPC-EQ", "11630"),
+    "POWERGRID.NS": ("POWERGRID-EQ", "14977"),
+    "M&M.NS": ("M&M-EQ", "2031"),
+    "KOTAKBANK.NS": ("KOTAKBANK-EQ", "1922"),
+    "HCLTECH.NS": ("HCLTECH-EQ", "7229"),
+    "TITAN.NS": ("TITAN-EQ", "3506"),
+    "ULTRACEMCO.NS": ("ULTRACEMCO-EQ", "11532"),
+    "ASIANPAINT.NS": ("ASIANPAINT-EQ", "236"),
+    "HINDUNILVR.NS": ("HINDUNILVR-EQ", "1394")
 }
 
 @st.cache_data(ttl=30)
 def get_market_data(tf):
     results = []
-    chart_data_dict = {}
     smart_api = None
 
     if api_key and client_code and mpin and totp_secret:
@@ -62,7 +78,6 @@ def get_market_data(tf):
             df['EMA_20'] = ta.trend.ema_indicator(df['Close'], window=20)
             df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
             df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
-            chart_data_dict[y_symbol] = df
 
             daily_df = yf.download(y_symbol, period="2d", interval="1d", progress=False)
             if isinstance(daily_df.columns, pd.MultiIndex):
@@ -98,51 +113,111 @@ def get_market_data(tf):
                 signal = "⚪ WAIT"
                 entry, sl, target = curr_price, 0.0, 0.0
 
+            clean_name = y_symbol.replace(".NS", "")
+            # TradingView Direct Chart Link (Replace & with _ for M&M)
+            tv_symbol = clean_name.replace("&", "_")
+            tv_url = f"https://tradingview.com{tv_symbol}"
+
             results.append({
-                "Stock": y_symbol.replace(".NS", ""),
-                "Full_Symbol": y_symbol,
+                "Stock": clean_name,
+                "TV_Link": tv_url,
+                "TV_Symbol": tv_symbol,
                 "Live Price (₹)": round(curr_price, 2),
                 "Change (%)": round(change_pct, 2),
                 "RSI": round(rsi_val, 1),
                 "Signal": signal,
-                "Entry (₹)": round(entry, 2),
                 "Stop-Loss (₹)": sl if sl > 0 else "-",
                 "Target (₹)": target if target > 0 else "-"
             })
         except:
             pass
 
-    return pd.DataFrame(results), chart_data_dict
+    return pd.DataFrame(results)
 
-if st.button("🔄 Refresh Live Data"):
+if st.button("🔄 Refresh Live Market Data"):
     st.cache_data.clear()
 
-df_res, charts = get_market_data(timeframe)
+with st.spinner("Scanning Top NSE Stocks..."):
+    df_res = get_market_data(timeframe)
+
+# Table column configuration for clickable TradingView links
+col_config = {
+    "TV_Link": st.column_config.LinkColumn(
+        "TradingView",
+        help="Click to open full chart in TradingView",
+        display_text="Open Chart 📈"
+    )
+}
 
 if not df_res.empty:
+    # 1. Top 10 Gainers & Top 10 Losers
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("🚀 Top Gainers (Bullish Trend)")
-        gainers = df_res.sort_values(by="Change (%)", ascending=False).head(5)
-        st.dataframe(gainers[["Stock", "Live Price (₹)", "Change (%)", "Signal", "Stop-Loss (₹)", "Target (₹)"]], use_container_width=True, hide_index=True)
+        st.subheader("🚀 Top 10 Gainers (Bullish)")
+        gainers = df_res.sort_values(by="Change (%)", ascending=False).head(10)
+        st.dataframe(
+            gainers[["Stock", "TV_Link", "Live Price (₹)", "Change (%)", "Signal", "Stop-Loss (₹)", "Target (₹)"]],
+            column_config=col_config,
+            use_container_width=True,
+            hide_index=True
+        )
     with c2:
-        st.subheader("📉 Top Losers (Bearish Trend)")
-        losers = df_res.sort_values(by="Change (%)", ascending=True).head(5)
-        st.dataframe(losers[["Stock", "Live Price (₹)", "Change (%)", "Signal", "Stop-Loss (₹)", "Target (₹)"]], use_container_width=True, hide_index=True)
+        st.subheader("📉 Top 10 Losers (Bearish)")
+        losers = df_res.sort_values(by="Change (%)", ascending=True).head(10)
+        st.dataframe(
+            losers[["Stock", "TV_Link", "Live Price (₹)", "Change (%)", "Signal", "Stop-Loss (₹)", "Target (₹)"]],
+            column_config=col_config,
+            use_container_width=True,
+            hide_index=True
+        )
 
     st.divider()
-    st.subheader("🕯️ Live Candlestick Chart & 20 EMA Trendline")
-    selected_stock_name = st.selectbox("Select Stock to View Chart:", df_res["Stock"].tolist())
-    full_sym = selected_stock_name + ".NS"
 
-    if full_sym in charts:
-        cdf = charts[full_sym].tail(60)
-        fig = go.Figure()
-        fig.add_trace(go.Candlestick(x=cdf.index, open=cdf['Open'], high=cdf['High'], low=cdf['Low'], close=cdf['Close'], name="Price"))
-        fig.add_trace(go.Scatter(x=cdf.index, y=cdf['EMA_20'], mode='lines', line=dict(color='orange', width=2), name="20 EMA"))
-        fig.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark", title=f"{selected_stock_name} ({timeframe} Chart)")
-        st.plotly_chart(fig, use_container_width=True)
+    # 2. Embedded Official TradingView Chart Widget
+    st.subheader("🕯️ Live TradingView Chart (With 20 EMA & RSI)")
+    selected_stock = st.selectbox("Select Stock for Live TradingView Chart:", df_res["Stock"].tolist())
+    tv_sym = selected_stock.replace("&", "_")
+
+    # Timeframe mapping for TradingView widget
+    tf_map = {"5m": "5", "15m": "15", "1h": "60"}
+    tv_interval = tf_map.get(timeframe, "15")
+
+    tv_widget_html = f"""
+    <div class="tradingview-widget-container">
+      <div id="tradingview_chart"></div>
+      <script type="text/javascript" src="https://tradingview.com"></script>
+      <script type="text/javascript">
+      new TradingView.widget({{
+        "width": "100%",
+        "height": 550,
+        "symbol": "NSE:{tv_sym}",
+        "interval": "{tv_interval}",
+        "timezone": "Asia/Kolkata",
+        "theme": "dark",
+        "style": "1",
+        "locale": "in",
+        "toolbar_bg": "#f1f3f6",
+        "enable_publishing": false,
+        "hide_side_toolbar": false,
+        "allow_symbol_change": true,
+        "studies": [
+          "MASimple@tv-basicstudies",
+          "RSI@tv-basicstudies"
+        ],
+        "container_id": "tradingview_chart"
+      }});
+      </script>
+    </div>
+    """
+    components.html(tv_widget_html, height=560)
 
     st.divider()
-    st.subheader("📋 All Stocks Signal, Stop-Loss & Target Board")
-    st.dataframe(df_res.drop(columns=["Full_Symbol"]), use_container_width=True, hide_index=True)
+
+    # 3. Complete Market Scanner Board
+    st.subheader("📋 Complete NSE Scanner Board")
+    st.dataframe(
+        df_res[["Stock", "TV_Link", "Live Price (₹)", "Change (%)", "RSI", "Signal", "Stop-Loss (₹)", "Target (₹)"]],
+        column_config=col_config,
+        use_container_width=True,
+        hide_index=True
+    )
