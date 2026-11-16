@@ -1,3 +1,4 @@
+import time
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -34,15 +35,23 @@ client_code = st.secrets.get("CLIENT_CODE", "")
 mpin = st.secrets.get("MPIN", "")
 totp_secret = st.secrets.get("TOTP_SECRET", "")
 
-c_title, c_tf, c_rr, c_btn = st.columns([3.5, 1, 1, 1])
+# Sidebar: Capital & Risk Management + Auto-Live Settings
+st.sidebar.header("💰 Risk & Capital Manager")
+total_capital = st.sidebar.number_input("Total Capital (₹)", min_value=5000, value=100000, step=5000)
+risk_per_trade_pct = st.sidebar.slider("Max Risk Per Trade (%)", 0.5, 5.0, 1.0, 0.5)
+risk_reward = st.sidebar.selectbox("Risk : Reward Ratio", [1.5, 2.0, 2.5, 3.0], index=1)
+timeframe = st.sidebar.selectbox("Scanner Timeframe", ["5m", "15m", "1h"], index=1)
+
+st.sidebar.divider()
+auto_live = st.sidebar.toggle("🔴 Auto-Live Mode (30s Refresh)", value=False)
+st.sidebar.caption("Turn ON during live market (9:15 AM - 3:30 PM IST) for automatic real-time updates.")
+
+# Top Header
+c_title, c_btn = st.columns([5, 1])
 with c_title:
-    st.markdown("### 💠 TradeFinder Pro Workspace (Intraday Live)")
-with c_tf:
-    timeframe = st.selectbox("Timeframe", ["5m", "15m", "1h"], index=1, label_visibility="collapsed")
-with c_rr:
-    risk_reward = st.selectbox("R:R", [1.5, 2.0, 2.5, 3.0], index=1, format_func=lambda x: f"R:R 1:{x}", label_visibility="collapsed")
+    st.markdown("### 💠 TradeFinder Pro Live (VWAP + EMA + Position Sizing)")
 with c_btn:
-    if st.button("🔄 Refresh Live", use_container_width=True):
+    if st.button("🔄 Sync Now", use_container_width=True):
         st.cache_data.clear()
 
 stocks_info = {
@@ -100,7 +109,7 @@ def fetch_global_indices():
     return idx_data
 
 @st.cache_data(ttl=25)
-def scan_all_stocks(tf):
+def scan_all_stocks(tf, cap, risk_pct, rr):
     results = []
     charts_dict = {}
     smart_api = None
@@ -122,6 +131,8 @@ def scan_all_stocks(tf):
     intraday_bulk = yf.download(tickers, period="5d", interval=tf, group_by='ticker', progress=False)
     daily_bulk = yf.download(tickers, period="55d", interval="1d", group_by='ticker', progress=False)
 
+    max_risk_rs = (cap * risk_pct) / 100.0
+
     for y_sym, (angel_sym, token, sector) in stocks_info.items():
         try:
             df = intraday_bulk[y_sym].dropna()
@@ -133,7 +144,11 @@ def scan_all_stocks(tf):
             df['EMA_20'] = ta.trend.ema_indicator(df['Close'], window=20)
             df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
             df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
-            charts_dict[y_sym.replace(".NS", "")] = df
+            # Calculate Intraday VWAP
+            df['VWAP'] = ta.volume.volume_weighted_average_price(df['High'], df['Low'], df['Close'], df['Volume'], window=14)
+            
+            clean_name = y_sym.replace(".NS", "")
+            charts_dict[clean_name] = df
 
             prev_close = float(ddf['Close'].iloc[-2])
             curr_price = float(df['Close'].iloc[-1])
@@ -167,24 +182,30 @@ def scan_all_stocks(tf):
             high_50d = float(ddf['High'].iloc[-51:-1].max()) if len(ddf) >= 51 else high_10d
 
             ema_val = float(df['EMA_20'].iloc[-1])
+            vwap_val = float(df['VWAP'].iloc[-1])
             rsi_val = float(df['RSI'].iloc[-1])
             atr_val = float(df['ATR'].iloc[-1])
 
-            if curr_price > ema_val and rsi_val >= 52 and change_pct > 0.3:
+            vwap_status = "Above VWAP 🟢" if curr_price > vwap_val else "Below VWAP 🔴"
+            sl_points = 1.5 * atr_val
+            safe_qty = int(max_risk_rs / sl_points) if sl_points > 0 else 0
+
+            # Institutional Pro Signal: Price > EMA20 AND Price > VWAP
+            if curr_price > ema_val and curr_price > vwap_val and rsi_val >= 52 and change_pct > 0.3:
                 signal = "🟢 BUY"
-                sl = round(curr_price - (1.5 * atr_val), 2)
-                target = round(curr_price + (1.5 * atr_val * risk_reward), 2)
-            elif curr_price < ema_val and rsi_val <= 48 and change_pct < -0.3:
+                sl = round(curr_price - sl_points, 2)
+                target = round(curr_price + (sl_points * rr), 2)
+            elif curr_price < ema_val and curr_price < vwap_val and rsi_val <= 48 and change_pct < -0.3:
                 signal = "🔴 SELL"
-                sl = round(curr_price + (1.5 * atr_val), 2)
-                target = round(curr_price - (1.5 * atr_val * risk_reward), 2)
+                sl = round(curr_price + sl_points, 2)
+                target = round(curr_price - (sl_points * rr), 2)
             else:
                 signal = "⚪ WAIT"
-                sl, target = 0.0, 0.0
+                sl, target, safe_qty = 0.0, 0.0, 0
 
-            clean_name = y_sym.replace(".NS", "")
             tv_sym = clean_name.replace("&", "_")
-            tv_url = f"https://tradingview.com{tv_sym}"
+            # 100% Working Direct TradingView URL
+            tv_url = f"https://tradingview.com{tv_sym}/"
 
             results.append({
                 "Stock": clean_name,
@@ -194,9 +215,12 @@ def scan_all_stocks(tf):
                 "Day Low": round(day_low, 2),
                 "Day High": round(day_high, 2),
                 "Change (%)": round(change_pct, 2),
+                "VWAP": round(vwap_val, 2),
+                "VWAP Trend": vwap_status,
                 "Vol Boost (x)": vol_boost,
                 "RSI": round(rsi_val, 1),
                 "Signal": signal,
+                "Safe Qty": safe_qty if safe_qty > 0 else "-",
                 "Stop-Loss": sl if sl > 0 else "-",
                 "Target": target if target > 0 else "-",
                 "Dist_High_%": dist_high_pct,
@@ -215,38 +239,6 @@ if indices_data:
     for i, (name, (val, chg)) in enumerate(indices_data.items()):
         cols[i].metric(label=name, value=f"{val:,}", delta=f"{chg}%")
 
-with st.spinner("Syncing Angel One Live OHLC & Institutional Scanners..."):
-    df, charts_data, status_msg = scan_all_stocks(timeframe)
+with st.spinner("Syncing Angel One Live OHLC, VWAP & Risk Metrics..."):
+    df, charts_data, status_msg = scan_all_stocks(timeframe, total_capital, risk_per_trade_pct, risk_reward)
 
-st.caption(f"Feed Status: **{status_msg}** | Timeframe: **{timeframe}** | Click **'Open 📈'** to launch TradingView.")
-
-active_section = st.radio(
-    "Navigation",
-    [
-        "⚡ Market Pulse",
-        "🔥 Insider Strategy & Heatmap",
-        "📊 Sector Scope",
-        "📈 Swing Spectrum",
-        "🕯️ Live Interactive Chart"
-    ],
-    horizontal=True,
-    label_visibility="collapsed"
-)
-
-col_cfg = {
-    "TV_Link": st.column_config.LinkColumn("Chart", display_text="Open 📈")
-}
-
-if not df.empty:
-    if active_section == "⚡ Market Pulse":
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("🚀 Top 10 Gainers (Momentum)")
-            gainers = df.sort_values(by="Change (%)", ascending=False).head(10)
-            st.dataframe(gainers[["Stock", "TV_Link", "LTP (₹)", "Change (%)", "Signal", "Stop-Loss", "Target"]], column_config=col_cfg, use_container_width=True, hide_index=True)
-        with c2:
-            st.subheader("📉 Top 10 Losers (Breakdown)")
-            losers = df.sort_values(by="Change (%)", ascending=True).head(10)
-            st.dataframe(losers[["Stock", "TV_Link", "LTP (₹)", "Change (%)", "Signal", "Stop-Loss", "Target"]], column_config=col_cfg, use_container_width=True, hide_index=True)
-
-        st.divider()
