@@ -45,25 +45,26 @@ def load_market_data():
             sub = df[tk].dropna()
             if len(sub) < 15:
                 continue
-            c_now = float(sub["Close"].iloc[-1])
-            c_prev = float(sub["Close"].iloc[-2])
-            h_now = float(sub["High"].iloc[-1])
-            l_now = float(sub["Low"].iloc[-1])
-            v_now = float(sub["Volume"].iloc[-1])
-            v_avg20 = float(sub["Volume"].iloc[-21:-1].mean())
+            c_now = float(sub["Close"].values.item(-1))
+            c_prev = float(sub["Close"].values.item(-2))
+            h_now = float(sub["High"].values.item(-1))
+            l_now = float(sub["Low"].values.item(-1))
+            v_now = float(sub["Volume"].values.item(-1))
+            v_avg20 = float(sub["Volume"].head(len(sub) - 1).tail(20).mean())
             chg_pct = ((c_now - c_prev) / c_prev) * 100
             rvol = round(v_now / v_avg20, 2) if v_avg20 > 0 else 0
 
-            h_2d = float(sub["High"].iloc[-3:-1].max())
-            l_2d = float(sub["Low"].iloc[-3:-1].min())
+            prev_sub = sub.head(len(sub) - 1)
+            h_2d = float(prev_sub["High"].tail(2).max())
+            l_2d = float(prev_sub["Low"].tail(2).min())
 
-            h_10d = float(sub["High"].iloc[-11:-1].max())
-            l_10d = float(sub["Low"].iloc[-11:-1].min())
-            h_50d = float(sub["High"].iloc[-51:-1].max()) if len(sub) >= 51 else h_10d
-            l_50d = float(sub["Low"].iloc[-51:-1].min()) if len(sub) >= 51 else l_10d
+            h_10d = float(prev_sub["High"].tail(10).max())
+            l_10d = float(prev_sub["Low"].tail(10).min())
+            h_50d = float(prev_sub["High"].tail(50).max())
+            l_50d = float(prev_sub["Low"].tail(50).min())
 
-            ranges = (sub["High"] - sub["Low"]).iloc[-7:]
-            is_nr7 = bool(ranges.iloc[-1] == ranges.min())
+            ranges = (sub["High"] - sub["Low"]).tail(7)
+            is_nr7 = bool(ranges.values.item(-1) == ranges.min())
 
             rows.append({
                 "Symbol": sym,
@@ -201,9 +202,9 @@ elif menu == "⚡ Option Clock (Live OI Flow)":
             o = m[(m.exch_seg == "NFO") & (m.name == u)].copy()
             pat = rf"^{re.escape(u)}(\d{{2}}[A-Z]{{3}}\d{{2}})(\d+(?:\.\d+)?)(CE|PE)$"
             ext = o.symbol.str.extract(pat)
-            o["exp_str"] = ext.iloc[:, 0]
-            o["k"] = pd.to_numeric(ext.iloc[:, 1], errors="coerce")
-            o["cp"] = ext.iloc[:, 2]
+            o["exp_str"] = ext.get(0)
+            o["k"] = pd.to_numeric(ext.get(1), errors="coerce")
+            o["cp"] = ext.get(2)
             o = o.dropna(subset=["exp_str", "k", "cp"])
             o["exp"] = pd.to_datetime(o["exp_str"], format="%d%b%y", errors="coerce")
             o = o[o.exp >= pd.Timestamp.today().normalize()]
@@ -211,5 +212,3 @@ elif menu == "⚡ Option Clock (Live OI Flow)":
                 continue
             o = o[o.exp == o.exp.min()]
             strikes = sorted(o.k.unique())
-            atm = min(strikes, key=lambda x: abs(x - p))
-            idx_a = strikes.index(atm)
