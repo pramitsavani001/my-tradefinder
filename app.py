@@ -7,21 +7,26 @@ import pyotp
 import plotly.express as px
 from SmartApi import SmartConnect
 
-# 1. Dark Mode & Sophisticated UI Setup
-st.set_page_config(page_title="TradeFinder Pro Workspace", page_icon="📈", layout="wide")
+# 1. Page Config & Clean Dark Theme
+st.set_page_config(page_title="TradeFinder Pro Live", page_icon="⚡", layout="wide")
 
 st.markdown("""
 <style>
-    .stApp { background-color: #0b0f19; color: #e2e8f0; }
+    .stApp { background-color: #0b0f19; color: #f8fafc; }
     div[data-testid="stMetric"] {
         background-color: #131a2a;
         border: 1px solid #1e293b;
-        padding: 12px 15px;
-        border-radius: 10px;
+        padding: 10px 14px;
+        border-radius: 8px;
     }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; background-color: #131a2a; padding: 8px; border-radius: 10px; }
-    .stTabs [data-baseweb="tab"] { color: #94a3b8; font-weight: 600; }
-    .stTabs [aria-selected="true"] { background-color: #1d4ed8 !important; color: white !important; border-radius: 6px; }
+    /* Make Horizontal Radio look like Sleek Top Navigation Buttons */
+    div[role="radiogroup"] {
+        background-color: #131a2a;
+        padding: 8px 12px;
+        border-radius: 10px;
+        border: 1px solid #1e293b;
+        gap: 12px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -31,16 +36,16 @@ client_code = st.secrets.get("CLIENT_CODE", "")
 mpin = st.secrets.get("MPIN", "")
 totp_secret = st.secrets.get("TOTP_SECRET", "")
 
-# Header & Top Controls
-col_title, col_tf, col_rr, col_btn = st.columns([3, 1.2, 1.2, 1])
-with col_title:
-    st.markdown("## 💠 TradeFinder Pro Workspace")
-with col_tf:
+# Top Bar: Title + Controls
+c_title, c_tf, c_rr, c_btn = st.columns([3.5, 1, 1, 1])
+with c_title:
+    st.markdown("### 💠 TradeFinder Pro Workspace (Intraday Live)")
+with c_tf:
     timeframe = st.selectbox("Timeframe", ["5m", "15m", "1h"], index=1, label_visibility="collapsed")
-with col_rr:
-    risk_reward = st.selectbox("Risk:Reward", [1.5, 2.0, 2.5, 3.0], index=1, format_func=lambda x: f"R:R 1:{x}", label_visibility="collapsed")
-with col_btn:
-    if st.button("🔄 Sync Live", use_container_width=True):
+with c_rr:
+    risk_reward = st.selectbox("R:R", [1.5, 2.0, 2.5, 3.0], index=1, format_func=lambda x: f"R:R 1:{x}", label_visibility="collapsed")
+with c_btn:
+    if st.button("🔄 Refresh Live", use_container_width=True):
         st.cache_data.clear()
 
 # Stock Universe with Sectors & Angel One Tokens
@@ -79,7 +84,7 @@ def fetch_global_indices():
         "NIFTY 50": "^NSEI",
         "BANK NIFTY": "^NSEBANK",
         "INDIA VIX": "^INDIAVIX",
-        "DAX (Germany)": "^GDAXI",
+        "DAX": "^GDAXI",
         "DOW JONES": "^DJI",
         "BTC/USD": "BTC-USD"
     }
@@ -98,7 +103,7 @@ def fetch_global_indices():
             pass
     return idx_data
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=25)
 def scan_all_stocks(tf):
     results = []
     smart_api = None
@@ -116,20 +121,19 @@ def scan_all_stocks(tf):
         except:
             smart_api = None
 
+    # Fast Single-Call Data Fetch
+    tickers = list(stocks_info.keys())
+    intraday_bulk = yf.download(tickers, period="5d", interval=tf, group_by='ticker', progress=False)
+    daily_bulk = yf.download(tickers, period="55d", interval="1d", group_by='ticker', progress=False)
+
     for y_sym, (angel_sym, token, sector) in stocks_info.items():
         try:
-            # Intraday Data
-            df = yf.download(y_sym, period="5d", interval=tf, progress=False)
-            if df.empty or len(df) < 25:
+            df = intraday_bulk[y_sym].dropna()
+            ddf = daily_bulk[y_sym].dropna()
+            if len(df) < 25 or len(ddf) < 5:
                 continue
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
 
-            # Daily Data (for 10-Day & 50-Day Breakouts + Day High/Low)
-            ddf = yf.download(y_sym, period="60d", interval="1d", progress=False)
-            if isinstance(ddf.columns, pd.MultiIndex):
-                ddf.columns = ddf.columns.get_level_values(0)
-
+            df = df.copy()
             df['EMA_20'] = ta.trend.ema_indicator(df['Close'], window=20)
             df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
             df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
@@ -139,6 +143,7 @@ def scan_all_stocks(tf):
             day_high = float(ddf['High'].iloc[-1])
             day_low = float(ddf['Low'].iloc[-1])
 
+            # Override with 0-Sec Angel One Live LTP
             if smart_api:
                 try:
                     ltp_res = smart_api.ltpData("NSE", angel_sym, token)
@@ -149,16 +154,12 @@ def scan_all_stocks(tf):
 
             change_pct = ((curr_price - prev_close) / prev_close) * 100
             
-            # 10-Min / Last Candle Momentum Spike
-            last_candle_open = float(df['Open'].iloc[-1])
-            candle_spike_pct = ((curr_price - last_candle_open) / last_candle_open) * 100
-
-            # Volume Boost (Current Vol vs 20-period Avg Vol)
+            # Volume Boost
             avg_vol = float(df['Volume'].tail(20).mean())
             curr_vol = float(df['Volume'].iloc[-1])
             vol_boost = round(curr_vol / avg_vol, 2) if avg_vol > 0 else 1.0
 
-            # 10-Day & 50-Day High/Low
+            # 10-Day & 50-Day Highs
             high_10d = float(ddf['High'].iloc[-11:-1].max())
             high_50d = float(ddf['High'].iloc[-51:-1].max()) if len(ddf) >= 51 else high_10d
 
@@ -166,7 +167,6 @@ def scan_all_stocks(tf):
             rsi_val = float(df['RSI'].iloc[-1])
             atr_val = float(df['ATR'].iloc[-1])
 
-            # Signal Logic
             if curr_price > ema_val and 55 <= rsi_val <= 75 and change_pct > 0.4:
                 signal = "🟢 BUY"
                 sl = round(curr_price - (1.5 * atr_val), 2)
@@ -189,7 +189,6 @@ def scan_all_stocks(tf):
                 "TV_Link": tv_url,
                 "LTP (₹)": round(curr_price, 2),
                 "Change (%)": round(change_pct, 2),
-                "Spike (%)": round(candle_spike_pct, 2),
                 "Vol Boost (x)": vol_boost,
                 "RSI": round(rsi_val, 1),
                 "Signal": signal,
@@ -205,34 +204,39 @@ def scan_all_stocks(tf):
 
     return pd.DataFrame(results), api_status
 
-# 2. Global Markets Ticker Strip (Like TradeFinder Home)
+# Global Indices Strip
 indices_data = fetch_global_indices()
 if indices_data:
     cols = st.columns(len(indices_data))
     for i, (name, (val, chg)) in enumerate(indices_data.items()):
         cols[i].metric(label=name, value=f"{val:,}", delta=f"{chg}%")
 
-with st.spinner("Loading Live Institutional Scanners..."):
+with st.spinner("Syncing Live Institutional Data..."):
     df, status_msg = scan_all_stocks(timeframe)
 
-st.caption(f"Feed Status: **{status_msg}** | Timeframe: **{timeframe}** | Click 'Open 📈' on any stock for full TradingView chart.")
+st.caption(f"Feed Status: **{status_msg}** | Timeframe: **{timeframe}** | Click **'Open 📈'** in any table to launch TradingView.")
+
+# Reliable Navigation Bar (100% Clickable)
+active_section = st.radio(
+    "Navigation",
+    [
+        "⚡ Market Pulse",
+        "🔥 Insider Strategy & Heatmap",
+        "📊 Sector Scope",
+        "📈 Swing Spectrum",
+        "🕯️ Live TradingView Chart"
+    ],
+    horizontal=True,
+    label_visibility="collapsed"
+)
 
 col_cfg = {
     "TV_Link": st.column_config.LinkColumn("Chart", display_text="Open 📈")
 }
 
-# 3. Multi-Tab TradeFinder Architecture
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "⚡ Market Pulse (Gainers/Losers/Boost)",
-    "🔥 Insider Strategy (10-Min Spike & LOM)",
-    "📊 Sector Scope (Heatmap)",
-    "📈 Swing Spectrum (10D & 50D Breakout)",
-    "🕯️ Live TradingView Terminal"
-])
-
 if not df.empty:
-    # TAB 1: MARKET PULSE
-    with tab1:
+    # SECTION 1: MARKET PULSE
+    if active_section == "⚡ Market Pulse":
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("🚀 Top 10 Gainers (Momentum)")
@@ -244,3 +248,10 @@ if not df.empty:
             st.dataframe(losers[["Stock", "TV_Link", "LTP (₹)", "Change (%)", "Signal", "Stop-Loss", "Target"]], column_config=col_cfg, use_container_width=True, hide_index=True)
 
         st.divider()
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            st.subheader("💥 Intraday Volume Boost")
+            boost_df = df.sort_values(by="Vol Boost (x)", ascending=False).head(8)
+            st.dataframe(boost_df[["Stock", "TV_Link", "LTP (₹)", "Vol Boost (x)", "Change (%)"]], column_config=col_cfg, use_container_width=True, hide_index=True)
+        with b2:
+            st.subheader("🏔️ Day High Stocks")
