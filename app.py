@@ -3,8 +3,8 @@ import pandas as pd, pyotp, streamlit as st
 from SmartApi import SmartConnect
 import config as C, strategy as S
 
-st.set_page_config(page_title="TradeFlow Pro (All F&O Option-OI)", page_icon="⚡", layout="wide")
-st.title("⚡ TradeFlow – All NSE F&O Option-OI Flow Scanner")
+st.set_page_config(page_title="TradeFlow Pro (F&O Option-OI)", page_icon="⚡", layout="wide")
+st.title("⚡ TradeFlow – NSE F&O Option-OI Flow Scanner")
 
 cap = st.sidebar.number_input("Capital (₹)", 5000, 5000000, C.CAPITAL, 5000)
 risk = st.sidebar.slider("Risk per trade (%)", 0.25, 3.0, C.RISK_PCT, 0.25)
@@ -13,48 +13,68 @@ if st.sidebar.button("🔄 Capture Live OI Snapshot"):
 
 @st.cache_resource
 def angel_login():
-    api = SmartConnect(api_key=C.API_KEY)
+    api = SmartConnect(api_key=C.API_KEY, timeout=25)
     r = api.generateSession(C.CLIENT_CODE, C.PIN, pyotp.TOTP(C.TOTP_SECRET).now())
     if not r or not r.get("status"):
         raise RuntimeError(f"Login failed: {r}")
     return api
+
+def safe_search(api, exch, query):
+    for attempt in range(2):
+        try:
+            time.sleep(0.4)
+            r = api.searchScrip(exch, query)
+            if r and r.get("status") and r.get("data"):
+                return r["data"]
+        except Exception:
+            time.sleep(1.5)
+    return []
 
 @st.cache_data(ttl=86400)
 def build_master(_api):
     rows = []
     # 1. Fetch Index Options (NIFTY, BANKNIFTY)
     for idx in C.INDEX_TOKENS:
-        time.sleep(0.35)
-        r = _api.searchScrip("NFO", idx)
-        if r and r.get("status") and r.get("data"):
-            for item in r["data"]:
-                sym = item.get("tradingsymbol", "")
-                if re.match(rf"^{re.escape(idx)}\d{{2}}[A-Z]{{3}}\d{{2}}\d+(\.\d+)?(CE|PE)$", sym):
-                    rows.append({"token": str(item["symboltoken"]), "symbol": sym, "name": idx, "exch_seg": "NFO"})
-    # 2. Fetch All Universe Stocks (Equity + Options)
-    for sym_name in C.UNIVERSE:
-        time.sleep(0.35)
-        r_nse = _api.searchScrip("NSE", f"{sym_name}-EQ")
-        if r_nse and r_nse.get("status") and r_nse.get("data"):
-            for item in r_nse["data"]:
-                if item.get("tradingsymbol") == f"{sym_name}-EQ":
-                    rows.append({"token": str(item["symboltoken"]), "symbol": f"{sym_name}-EQ", "name": sym_name, "exch_seg": "NSE"})
-                    break
-        time.sleep(0.35)
-        r_nfo = _api.searchScrip("NFO", sym_name)
-        if r_nfo and r_nfo.get("status") and r_nfo.get("data"):
-            for item in r_nfo["data"]:
-                tsym = item.get("tradingsymbol", "")
-                if re.match(rf"^{re.escape(sym_name)}\d{{2}}[A-Z]{{3}}\d{{2}}\d+(\.\d+)?(CE|PE)$", tsym):
-                    rows.append({"token": str(item["symboltoken"]), "symbol": tsym, "name": sym_name, "exch_seg": "NFO"})
+        for item in safe_search(_api, "NFO", idx):
+            sym = item.get("tradingsymbol", "")
+            if re.match(rf"^{re.escape(idx)}\d{{2}}[A-Z]{{3}}\d{{2}}\d+(\.\d+)?(CE|PE)$", sym):
+                rows.append({"token": str(item["symboltoken"]), "symbol": sym, "name": idx, "exch_seg": "NFO"})
+    
+    # 2. Fetch Top Liquid F&O Stocks across all sectors (Fast & Reliable)
+    top_stocks = [
+        "HDFCBANK", "ICICIBANK", "SBIN", "AXISBANK", "KOTAKBANK", "INDUSINDBK", "BANKBARODA",
+        "BAJFINANCE", "BAJAJFINSV", "SHRIRAMFIN", "JIOFIN", "MCX", "BSE", "CDSL",
+        "TCS", "INFY", "WIPRO", "HCLTECH", "TECHM", "PERSISTENT", "COFORGE",
+        "SUNPHARMA", "CIPLA", "DRREDDY", "DIVISLAB", "APOLLOHOSP", "LUPIN",
+        "TATAMOTORS", "MARUTI", "M&M", "BAJAJ-AUTO", "EICHERMOT", "TVSMOTOR",
+        "TATASTEEL", "HINDALCO", "JSWSTEEL", "VEDL",
+        "RELIANCE", "ONGC", "NTPC", "POWERGRID", "COALINDIA", "TATAPOWER",
+        "LT", "ADANIENT", "ADANIPORTS", "HAL", "BEL", "BHEL",
+        "ITC", "HINDUNILVR", "TRENT", "TITAN", "DLF", "BHARTIARTL"
+    ]
+    for sym_name in top_stocks:
+        for item in safe_search(_api, "NSE", f"{sym_name}-EQ"):
+            if item.get("tradingsymbol") == f"{sym_name}-EQ":
+                rows.append({"token": str(item["symboltoken"]), "symbol": f"{sym_name}-EQ", "name": sym_name, "exch_seg": "NSE"})
+                break
+        for item in safe_search(_api, "NFO", sym_name):
+            tsym = item.get("tradingsymbol", "")
+            if re.match(rf"^{re.escape(sym_name)}\d{{2}}[A-Z]{{3}}\d{{2}}\d+(\.\d+)?(CE|PE)$", tsym):
+                rows.append({"token": str(item["symboltoken"]), "symbol": tsym, "name": sym_name, "exch_seg": "NFO"})
     return pd.DataFrame(rows)
 
 def fetch_quotes(api, exch, tokens, mode="FULL"):
     out = []
     for i in range(0, len(tokens), 50):
-        time.sleep(0.45)
-        r = api.getMarketData(mode, {exch: tokens[i:i+50]})
-        if r and r.get("status"): out += r["data"].get("fetched", [])
+        for attempt in range(2):
+            try:
+                time.sleep(0.5)
+                r = api.getMarketData(mode, {exch: tokens[i:i+50]})
+                if r and r.get("status"):
+                    out += r["data"].get("fetched", [])
+                break
+            except Exception:
+                time.sleep(1.5)
     return out
 
 def get_contracts(m, und, spot, n_strikes):
@@ -79,17 +99,19 @@ if "oi_history" not in st.session_state: st.session_state.oi_history = []
 
 try:
     api = angel_login()
-    with st.spinner("Fetching F&O Contracts directly from Angel One API (First load takes ~1.5 min, then cached for 24 hrs)..."):
+    with st.spinner("Loading F&O Contracts from Angel One API (~35 seconds on first load, then instant)..."):
         m = build_master(api)
 
-    all_fno_names = sorted(m[m.exch_seg == "NFO"].name.unique())
-    all_fno_names = [x for x in all_fno_names if x not in C.INDEX_TOKENS]
+    if m.empty:
+        raise RuntimeError("No contracts fetched from Angel One API. Please try again in 1 minute.")
+
+    all_fno_names = sorted([x for x in m[m.exch_seg == "NFO"].name.unique() if x not in C.INDEX_TOKENS])
     eq_df = m[(m.exch_seg == "NSE") & (m.symbol.str.endswith("-EQ"))]
     eq_map = dict(zip(eq_df.name, eq_df.token.astype(str)))
     unders = list(C.INDEX_TOKENS) + all_fno_names
     sp_tokens = {u: (C.INDEX_TOKENS.get(u) or eq_map.get(u)) for u in unders if (C.INDEX_TOKENS.get(u) or eq_map.get(u))}
 
-    with st.spinner(f"Scanning Live Option OI for ALL {len(all_fno_names)} F&O Stocks..."):
+    with st.spinner(f"Scanning Live Option OI for {len(all_fno_names)} F&O Stocks & Indices..."):
         q_spot = fetch_quotes(api, "NSE", list(sp_tokens.values()), "LTP")
         tok2u = {v: k for k, v in sp_tokens.items()}
         spot = {tok2u[str(x["symbolToken"])]: float(x["ltp"]) for x in q_spot if str(x["symbolToken"]) in tok2u}
