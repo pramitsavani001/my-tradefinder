@@ -8,24 +8,39 @@ st.title("⚡ TradeFlow – All NSE F&O Option-OI Flow Scanner")
 
 cap = st.sidebar.number_input("Capital (₹)", 5000, 5000000, C.CAPITAL, 5000)
 risk = st.sidebar.slider("Risk per trade (%)", 0.25, 3.0, C.RISK_PCT, 0.25)
-if st.sidebar.button("🔄 Capture Live OI Snapshot"): st.cache_data.clear()
+if st.sidebar.button("🔄 Capture Live OI Snapshot"):
+    st.cache_data.clear()
+    st.cache_resource.clear()
 
 @st.cache_resource
 def angel_login():
-    api = SmartConnect(api_key=C.API_KEY)
-    r = api.generateSession(C.CLIENT_CODE, C.PIN, pyotp.TOTP(C.TOTP_SECRET).now())
-    if not r.get("status"): raise RuntimeError(f"Login failed: {r.get('message')}")
-    return api
+    try:
+        api = SmartConnect(api_key=C.API_KEY)
+        r = api.generateSession(C.CLIENT_CODE, C.PIN, pyotp.TOTP(C.TOTP_SECRET).now())
+        if not r or not r.get("status"):
+            raise RuntimeError(f"Angel Login Failed: {r}")
+        return api
+    except Exception as e:
+        raise RuntimeError(f"Login Step Error (Check Secrets/IP): {e}")
 
 @st.cache_data(ttl=86400)
 def get_master():
-    url = "https://angelone.in"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    r = requests.get(url, headers=headers, timeout=60)
-    r.raise_for_status()
-    if not r.text.strip():
-        raise ValueError("Angel One server returned empty data. Try again in 1 minute.")
-    return pd.DataFrame(r.json())
+    urls = [
+        "https://angelone.in",
+        "https://angelbroking.com"
+    ]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*"
+    }
+    for url in urls:
+        try:
+            r = requests.get(url, headers=headers, timeout=60)
+            if r.status_code == 200 and r.text.strip().startswith("["):
+                return pd.DataFrame(r.json())
+        except Exception:
+            continue
+    raise RuntimeError("Angel One Scrip Master blocked Streamlit Cloud's US IP address.")
 
 def fetch_quotes(api, exch, tokens, mode="FULL"):
     out = []
