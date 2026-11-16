@@ -6,7 +6,6 @@ import config as C, strategy as S
 
 st.set_page_config(page_title="TradeFlow Pro – Personal TradeFinder", page_icon="⚡", layout="wide")
 
-# Custom CSS for dark professional dashboard look
 st.markdown("""
 <style>
     .metric-card {background-color: #161b22; padding: 15px; border-radius: 10px; border: 1px solid #30363d;}
@@ -16,7 +15,6 @@ st.markdown("""
 
 st.title("⚡ TradeFlow Pro – All-in-One Market Scanner")
 
-# Sidebar Navigation like TradeFinder
 menu = st.sidebar.radio("📌 Select Scanner Module", [
     "🔥 Market Pulse (Gainers/Losers/BO)",
     "📊 Sector Scope (Heatmap)",
@@ -36,7 +34,6 @@ def tv_url(sym):
     clean = sym.replace("&", "_").replace("-", "_")
     return f"https://tradingview.com{urllib.parse.quote(clean)}"
 
-# Fetch daily & intraday data for all Universe stocks using yfinance (works 24/7 even when market is closed)
 @st.cache_data(ttl=900)
 def load_market_data():
     tickers = [f"{s}.NS" for s in C.UNIVERSE]
@@ -46,7 +43,8 @@ def load_market_data():
         tk = f"{sym}.NS"
         try:
             sub = df[tk].dropna()
-            if len(sub) < 15: continue
+            if len(sub) < 15:
+                continue
             c_now = float(sub["Close"].iloc[-1])
             c_prev = float(sub["Close"].iloc[-2])
             h_now = float(sub["High"].iloc[-1])
@@ -55,21 +53,18 @@ def load_market_data():
             v_avg20 = float(sub["Volume"].iloc[-21:-1].mean())
             chg_pct = ((c_now - c_prev) / c_prev) * 100
             rvol = round(v_now / v_avg20, 2) if v_avg20 > 0 else 0
-            
-            # 2-Day High/Low
+
             h_2d = float(sub["High"].iloc[-3:-1].max())
             l_2d = float(sub["Low"].iloc[-3:-1].min())
-            
-            # 10-Day & 50-Day High/Low
+
             h_10d = float(sub["High"].iloc[-11:-1].max())
             l_10d = float(sub["Low"].iloc[-11:-1].min())
             h_50d = float(sub["High"].iloc[-51:-1].max()) if len(sub) >= 51 else h_10d
             l_50d = float(sub["Low"].iloc[-51:-1].min()) if len(sub) >= 51 else l_10d
-            
-            # NR7 (Narrowest Range of last 7 days)
+
             ranges = (sub["High"] - sub["Low"]).iloc[-7:]
             is_nr7 = bool(ranges.iloc[-1] == ranges.min())
-            
+
             rows.append({
                 "Symbol": sym,
                 "Sector": C.SYMBOL_SECTOR.get(sym, "Other"),
@@ -89,12 +84,11 @@ def load_market_data():
 
 col_cfg = {"Chart": st.column_config.LinkColumn("Chart", display_text="📈 Open TV")}
 
-# ==================== MODULE 1: MARKET PULSE ====================
 if menu == "🔥 Market Pulse (Gainers/Losers/BO)":
     st.subheader("🔥 Market Pulse – Momentum, Gainers, Losers & High Power Stocks")
     with st.spinner("Scanning NSE F&O Universe..."):
         mdf = load_market_data()
-    
+
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("### 🚀 Top Gainers")
@@ -104,7 +98,7 @@ if menu == "🔥 Market Pulse (Gainers/Losers/BO)":
         st.markdown("### 🔻 Top Losers")
         losers = mdf.sort_values("Change %", ascending=True).head(15)[["Symbol", "Sector", "Price", "Change %", "RVOL", "Chart"]]
         st.dataframe(losers, column_config=col_cfg, use_container_width=True, hide_index=True)
-        
+
     st.divider()
     c3, c4 = st.columns(2)
     with c3:
@@ -116,39 +110,38 @@ if menu == "🔥 Market Pulse (Gainers/Losers/BO)":
         extremes = mdf[(mdf["Day_Pos"] >= 90) | (mdf["Day_Pos"] <= 10)].sort_values("Change %", ascending=False)[["Symbol", "Price", "Change %", "Day_Pos", "Chart"]]
         st.dataframe(extremes, column_config=col_cfg, use_container_width=True, hide_index=True)
 
-# ==================== MODULE 2: SECTOR SCOPE ====================
 elif menu == "📊 Sector Scope (Heatmap)":
     st.subheader("📊 Sector Scope – Sector Performance & Heatmap")
     with st.spinner("Calculating Sector Strength..."):
         mdf = load_market_data()
-    
+
     sec_df = mdf.groupby("Sector").agg(
         Avg_Change=("Change %", "mean"),
         Avg_RVOL=("RVOL", "mean"),
         Advancing=("Change %", lambda x: (x > 0).sum()),
         Declining=("Change %", lambda x: (x < 0).sum())
     ).reset_index().sort_values("Avg_Change", ascending=False)
-    
+
     fig = px.bar(sec_df, x="Sector", y="Avg_Change", color="Avg_Change",
                  color_continuous_scale=["#ff4b4b", "#808080", "#00cc66"],
                  title="Sector Performance (% Change)", text_auto=".2f")
     fig.update_layout(height=400)
     st.plotly_chart(fig, use_container_width=True)
-    
+
     st.markdown("### 🔍 Drill-Down by Sector")
     sel_sec = st.selectbox("Select Sector to view stocks:", sec_df["Sector"].tolist())
     sub_sec = mdf[mdf["Sector"] == sel_sec].sort_values("Change %", ascending=False)[["Symbol", "Price", "Change %", "RVOL", "BO_2D", "Chart"]]
     st.dataframe(sub_sec, column_config=col_cfg, use_container_width=True, hide_index=True)
 
-# ==================== MODULE 3: OPTION CLOCK (ANGEL ONE LIVE OI) ====================
 elif menu == "⚡ Option Clock (Live OI Flow)":
     st.subheader("⚡ Option Clock – Live Option OI & PCR Scanner (Angel One API)")
-    
+
     @st.cache_resource
     def angel_login():
         api = SmartConnect(api_key=C.API_KEY, timeout=25)
         r = api.generateSession(C.CLIENT_CODE, C.PIN, pyotp.TOTP(C.TOTP_SECRET).now())
-        if not r or not r.get("status"): raise RuntimeError(f"Login failed: {r}")
+        if not r or not r.get("status"):
+            raise RuntimeError(f"Login failed: {r}")
         return api
 
     def safe_search(api, exch, query):
@@ -156,8 +149,10 @@ elif menu == "⚡ Option Clock (Live OI Flow)":
             try:
                 time.sleep(0.35)
                 r = api.searchScrip(exch, query)
-                if r and r.get("status") and r.get("data"): return r["data"]
-            except Exception: time.sleep(1)
+                if r and r.get("status") and r.get("data"):
+                    return r["data"]
+            except Exception:
+                time.sleep(1)
         return []
 
     @st.cache_data(ttl=86400)
@@ -182,8 +177,10 @@ elif menu == "⚡ Option Clock (Live OI Flow)":
             try:
                 time.sleep(0.45)
                 r = api.getMarketData(mode, {exch: tokens[i:i+50]})
-                if r and r.get("status"): out += r["data"].get("fetched", [])
-            except Exception: pass
+                if r and r.get("status"):
+                    out += r["data"].get("fetched", [])
+            except Exception:
+                pass
         return out
 
     try:
@@ -194,13 +191,25 @@ elif menu == "⚡ Option Clock (Live OI Flow)":
         eq_map = dict(zip(eq_df.name, eq_df.token.astype(str)))
         unders = list(m[m.exch_seg == "NFO"].name.unique())
         sp_tokens = {u: (C.INDEX_TOKENS.get(u) or eq_map.get(u)) for u in unders if (C.INDEX_TOKENS.get(u) or eq_map.get(u))}
-        
+
         q_spot = fetch_quotes(api, "NSE", list(sp_tokens.values()), "LTP")
         tok2u = {v: k for k, v in sp_tokens.items()}
         spot = {tok2u[str(x["symbolToken"])]: float(x["ltp"]) for x in q_spot if str(x["symbolToken"]) in tok2u}
-        
+
         contracts = []
         for u, p in spot.items():
             o = m[(m.exch_seg == "NFO") & (m.name == u)].copy()
             pat = rf"^{re.escape(u)}(\d{{2}}[A-Z]{{3}}\d{{2}})(\d+(?:\.\d+)?)(CE|PE)$"
             ext = o.symbol.str.extract(pat)
+            o["exp_str"] = ext.iloc[:, 0]
+            o["k"] = pd.to_numeric(ext.iloc[:, 1], errors="coerce")
+            o["cp"] = ext.iloc[:, 2]
+            o = o.dropna(subset=["exp_str", "k", "cp"])
+            o["exp"] = pd.to_datetime(o["exp_str"], format="%d%b%y", errors="coerce")
+            o = o[o.exp >= pd.Timestamp.today().normalize()]
+            if o.empty:
+                continue
+            o = o[o.exp == o.exp.min()]
+            strikes = sorted(o.k.unique())
+            atm = min(strikes, key=lambda x: abs(x - p))
+            idx_a = strikes.index(atm)
