@@ -1,4 +1,4 @@
-import time, requests, pyotp
+import requests, pyotp
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -134,14 +134,16 @@ if idx:
     for i, (k, (v, ch)) in enumerate(idx.items()): cols[i].metric(k, f"{v:,}", f"{ch}%")
 
 tech_data, charts = load_base(tf)
-df, status = get_live_df(tech_data, cap, risk_pct, rr)
 
-c_h, c_b = st.columns([4, 1])
-c_h.caption(f"Feed: **{status}** | Auto-Updating Every 5s | Theme: **{st.session_state.theme_mode}** | Chart: **{st.session_state.chart_plat}**")
-if c_b.button("🔄 Reset Cache", use_container_width=True): st.cache_data.clear()
+@st.fragment(run_every=5)
+def render_live_workspace():
+    df, status = get_live_df(tech_data, cap, risk_pct, rr)
+    c_h, c_b = st.columns([4, 1])
+    c_h.caption(f"Feed: **{status}** | Auto-Updating Every 5s | Theme: **{st.session_state.theme_mode}** | Chart: **{st.session_state.chart_plat}**")
+    if c_b.button("🔄 Reset Cache", use_container_width=True): st.cache_data.clear()
 
-if not df.empty:
-    ql1, ql2 = st.columns([3, 1.5])
-    sel_stock = ql1.selectbox("Select Stock:", sorted(df["Stock"].tolist()), label_visibility="collapsed")
-    tv_s = sel_stock.replace("&", "_").replace("-", "_")
-    chart_url = f"https://tradingview.com:{tv_s}" if st.session_state.chart_plat == "TradingView" else "https://angelone.in"
+    if not df.empty:
+        ql1, ql2 = st.columns([3, 1.5])
+        sel_stock = ql1.selectbox("Select Stock:", sorted(df["Stock"].tolist()), label_visibility="collapsed")
+        tv_s = sel_stock.replace("&", "_").replace("-", "_")
+        chart_url = f"https://tradingview.com:{tv_s}" if st.session_state.chart_plat == "TradingView" else "https://angelone.in"
