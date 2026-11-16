@@ -20,8 +20,12 @@ def angel_login():
 @st.cache_data(ttl=86400)
 def get_master():
     url = "https://angelone.in"
-    res = requests.get(url, timeout=45).json()
-    return pd.DataFrame(res)
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    r = requests.get(url, headers=headers, timeout=60)
+    r.raise_for_status()
+    if not r.text.strip():
+        raise ValueError("Angel One server returned empty data. Try again in 1 minute.")
+    return pd.DataFrame(r.json())
 
 def fetch_quotes(api, exch, tokens, mode="FULL"):
     out = []
@@ -98,7 +102,7 @@ try:
 
         st.subheader(f"🔥 All {len(stk)} F&O Stocks Option-OI Flow (Strongest Movers First)")
         stk["TV_Chart"] = [f"https://tradingview.com:{s.replace('&','_').replace('-','_')}" for s in stk.index]
-        st.dataframe(stk.sort_values("score", key=abs, ascending=False)[["Sector", "TV_Chart", "CE", "PE", "score", "Bias"]].rename(columns={"CE":"Δ Call OI","PE":"Δ Put OI","score":"Flow Score"}).round(2),
+        st.dataframe(stk.sort_values("score", key=abs, ascending=False)[["Sector", "TV_Chart", "CE", "PE", "score", "bias"]].rename(columns={"CE":"Δ Call OI","PE":"Δ Put OI","score":"Flow Score","bias":"Bias"}).round(2),
                      column_config={"TV_Chart": st.column_config.LinkColumn("Chart", display_text="📈 Open")}, use_container_width=True, height=550)
 except Exception as e:
     st.error(f"Error: {e}")
