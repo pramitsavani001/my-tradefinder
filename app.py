@@ -46,7 +46,7 @@ st.sidebar.divider()
 auto_live = st.sidebar.toggle("🔴 Auto-Live Mode (30s Refresh)", value=False)
 st.sidebar.caption("Scanning ALL ~200+ NSE F&O (Option Chain) Stocks automatically.")
 
-c_title, c_btn = st.columns()
+c_title, c_btn = st.columns([4, 1])
 with c_title:
     st.markdown("### 💠 TradeFinder Pro Live (All NSE Option Chain / F&O Stocks)")
 with c_btn:
@@ -199,4 +199,3 @@ def scan_all_fno_stocks(tf, cap, risk_pct, rr):
             tp = (df['High'] + df['Low'] + df['Close']) / 3.0
             df['VWAP'] = (tp * df['Volume']).rolling(14).sum() / df['Volume'].rolling(14).sum()
             df['VWAP'] = df['VWAP'].fillna(df['EMA_20'])
-
