@@ -1,13 +1,14 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import ta
 import pyotp
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from SmartApi import SmartConnect
 
-# 1. Page Config & Clean Dark Theme
+# 1. Page Config & Dark Theme
 st.set_page_config(page_title="TradeFinder Pro Live", page_icon="⚡", layout="wide")
 
 st.markdown("""
@@ -19,7 +20,6 @@ st.markdown("""
         padding: 10px 14px;
         border-radius: 8px;
     }
-    /* Make Horizontal Radio look like Sleek Top Navigation Buttons */
     div[role="radiogroup"] {
         background-color: #131a2a;
         padding: 8px 12px;
@@ -36,7 +36,7 @@ client_code = st.secrets.get("CLIENT_CODE", "")
 mpin = st.secrets.get("MPIN", "")
 totp_secret = st.secrets.get("TOTP_SECRET", "")
 
-# Top Bar: Title + Controls
+# Top Bar
 c_title, c_tf, c_rr, c_btn = st.columns([3.5, 1, 1, 1])
 with c_title:
     st.markdown("### 💠 TradeFinder Pro Workspace (Intraday Live)")
@@ -106,6 +106,7 @@ def fetch_global_indices():
 @st.cache_data(ttl=25)
 def scan_all_stocks(tf):
     results = []
+    charts_dict = {}
     smart_api = None
     api_status = "Yahoo Delay Feed 🟡"
 
@@ -121,7 +122,6 @@ def scan_all_stocks(tf):
         except:
             smart_api = None
 
-    # Fast Single-Call Data Fetch
     tickers = list(stocks_info.keys())
     intraday_bulk = yf.download(tickers, period="5d", interval=tf, group_by='ticker', progress=False)
     daily_bulk = yf.download(tickers, period="55d", interval="1d", group_by='ticker', progress=False)
@@ -137,23 +137,35 @@ def scan_all_stocks(tf):
             df['EMA_20'] = ta.trend.ema_indicator(df['Close'], window=20)
             df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
             df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
+            charts_dict[y_sym.replace(".NS", "")] = df
 
             prev_close = float(ddf['Close'].iloc[-2])
             curr_price = float(df['Close'].iloc[-1])
             day_high = float(ddf['High'].iloc[-1])
             day_low = float(ddf['Low'].iloc[-1])
 
-            # Override with 0-Sec Angel One Live LTP
+            # Sync Exact Live OHLC & LTP from Angel One
             if smart_api:
                 try:
                     ltp_res = smart_api.ltpData("NSE", angel_sym, token)
                     if ltp_res['status']:
-                        curr_price = float(ltp_res['data']['ltp'])
+                        d_live = ltp_res['data']
+                        curr_price = float(d_live['ltp'])
+                        if float(d_live.get('high', 0)) > 0:
+                            day_high = float(d_live['high'])
+                        if float(d_live.get('low', 0)) > 0:
+                            day_low = float(d_live['low'])
+                        if float(d_live.get('close', 0)) > 0:
+                            prev_close = float(d_live['close'])
                 except:
                     pass
 
             change_pct = ((curr_price - prev_close) / prev_close) * 100
             
+            # Distance from Day High & Day Low (%)
+            dist_high_pct = round(((day_high - curr_price) / day_high) * 100, 2) if day_high > 0 else 99
+            dist_low_pct = round(((curr_price - day_low) / day_low) * 100, 2) if day_low > 0 else 99
+
             # Volume Boost
             avg_vol = float(df['Volume'].tail(20).mean())
             curr_vol = float(df['Volume'].iloc[-1])
@@ -167,11 +179,12 @@ def scan_all_stocks(tf):
             rsi_val = float(df['RSI'].iloc[-1])
             atr_val = float(df['ATR'].iloc[-1])
 
-            if curr_price > ema_val and 55 <= rsi_val <= 75 and change_pct > 0.4:
+            # Clear Buy / Sell / SL / Target Logic
+            if curr_price > ema_val and rsi_val >= 52 and change_pct > 0.3:
                 signal = "🟢 BUY"
                 sl = round(curr_price - (1.5 * atr_val), 2)
                 target = round(curr_price + (1.5 * atr_val * risk_reward), 2)
-            elif curr_price < ema_val and 25 <= rsi_val <= 45 and change_pct < -0.4:
+            elif curr_price < ema_val and rsi_val <= 48 and change_pct < -0.3:
                 signal = "🔴 SELL"
                 sl = round(curr_price + (1.5 * atr_val), 2)
                 target = round(curr_price - (1.5 * atr_val * risk_reward), 2)
@@ -188,21 +201,23 @@ def scan_all_stocks(tf):
                 "Sector": sector,
                 "TV_Link": tv_url,
                 "LTP (₹)": round(curr_price, 2),
+                "Day Low": round(day_low, 2),
+                "Day High": round(day_high, 2),
                 "Change (%)": round(change_pct, 2),
                 "Vol Boost (x)": vol_boost,
                 "RSI": round(rsi_val, 1),
                 "Signal": signal,
                 "Stop-Loss": sl if sl > 0 else "-",
                 "Target": target if target > 0 else "-",
-                "Near Day High": curr_price >= (day_high * 0.996),
-                "Near Day Low": curr_price <= (day_low * 1.004),
-                "BO_10D": curr_price > high_10d,
-                "BO_50D": curr_price > high_50d
+                "Dist_High_%": dist_high_pct,
+                "Dist_Low_%": dist_low_pct,
+                "BO_10D": curr_price >= (high_10d * 0.995),
+                "BO_50D": curr_price >= (high_50d * 0.995)
             })
         except:
             pass
 
-    return pd.DataFrame(results), api_status
+    return pd.DataFrame(results), charts_dict, api_status
 
 # Global Indices Strip
 indices_data = fetch_global_indices()
@@ -211,12 +226,11 @@ if indices_data:
     for i, (name, (val, chg)) in enumerate(indices_data.items()):
         cols[i].metric(label=name, value=f"{val:,}", delta=f"{chg}%")
 
-with st.spinner("Syncing Live Institutional Data..."):
-    df, status_msg = scan_all_stocks(timeframe)
+with st.spinner("Syncing Angel One Live OHLC & Institutional Scanners..."):
+    df, charts_data, status_msg = scan_all_stocks(timeframe)
 
-st.caption(f"Feed Status: **{status_msg}** | Timeframe: **{timeframe}** | Click **'Open 📈'** in any table to launch TradingView.")
+st.caption(f"Feed Status: **{status_msg}** | Timeframe: **{timeframe}** | Click **'Open 📈'** to launch TradingView.")
 
-# Reliable Navigation Bar (100% Clickable)
 active_section = st.radio(
     "Navigation",
     [
@@ -224,7 +238,7 @@ active_section = st.radio(
         "🔥 Insider Strategy & Heatmap",
         "📊 Sector Scope",
         "📈 Swing Spectrum",
-        "🕯️ Live TradingView Chart"
+        "🕯️ Live Interactive Chart"
     ],
     horizontal=True,
     label_visibility="collapsed"
@@ -243,15 +257,3 @@ if not df.empty:
             gainers = df.sort_values(by="Change (%)", ascending=False).head(10)
             st.dataframe(gainers[["Stock", "TV_Link", "LTP (₹)", "Change (%)", "Signal", "Stop-Loss", "Target"]], column_config=col_cfg, use_container_width=True, hide_index=True)
         with c2:
-            st.subheader("📉 Top 10 Losers (Breakdown)")
-            losers = df.sort_values(by="Change (%)", ascending=True).head(10)
-            st.dataframe(losers[["Stock", "TV_Link", "LTP (₹)", "Change (%)", "Signal", "Stop-Loss", "Target"]], column_config=col_cfg, use_container_width=True, hide_index=True)
-
-        st.divider()
-        b1, b2, b3 = st.columns(3)
-        with b1:
-            st.subheader("💥 Intraday Volume Boost")
-            boost_df = df.sort_values(by="Vol Boost (x)", ascending=False).head(8)
-            st.dataframe(boost_df[["Stock", "TV_Link", "LTP (₹)", "Vol Boost (x)", "Change (%)"]], column_config=col_cfg, use_container_width=True, hide_index=True)
-        with b2:
-            st.subheader("🏔️ Day High Stocks")
