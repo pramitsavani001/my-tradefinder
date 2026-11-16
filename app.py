@@ -15,9 +15,9 @@ cap = st.sidebar.number_input("Total Capital (₹)", min_value=5000, value=30000
 risk_pct = st.sidebar.slider("Max Risk / Trade (%)", 0.5, 5.0, 1.0, 0.5)
 rr = st.sidebar.selectbox("Risk : Reward", [1.5, 2.0, 2.5, 3.0], index=1)
 tf = st.sidebar.selectbox("Candle Timeframe", ["5m", "15m", "1h"], index=1)
-refresh_sec = st.sidebar.selectbox("Live Refresh Speed",, index=0, format_func=lambda x: "Manual (OFF)" if x==0 else f"Every {x} Seconds 🔴")
+refresh_sec = st.sidebar.selectbox("Live Refresh Speed", [0, 3, 5, 10, 30], index=0, format_func=lambda x: "Manual (OFF)" if x==0 else f"Every {x} Seconds 🔴")
 
-c1, c2 = st.columns()
+c1, c2 = st.columns([4, 1])
 c1.markdown("### ⚡ Institutional Pro Terminal (All NSE F&O Real-Time)")
 if c2.button("🔄 Force Sync", use_container_width=True): st.cache_data.clear()
 
@@ -116,7 +116,7 @@ if not df.empty:
             sel = st.selectbox("Select Stock:", sorted(df["Stock"].tolist()), label_visibility="collapsed")
             top_m = pd.concat([df.sort_values("Change (%)", ascending=False).head(10), df.sort_values("Change (%)", ascending=True).head(10)])
             st.dataframe(top_m[["Stock","LTP (₹)","Change (%)"]], use_container_width=True, hide_index=True)
-        ri = df[df["Stock"] == sel].iloc
+        ri = df[df["Stock"] == sel].iloc[0]
         with col_m:
             st.markdown(f"#### 🕯️ {sel} Live Chart (20 EMA + VWAP + RSI)")
             st.link_button(f"↗️ Open {sel} Superchart on TradingView", f"https://tradingview.com{sel.replace('&','_').replace('-','_')}/", use_container_width=True)
