@@ -8,7 +8,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from SmartApi import SmartConnect
 
-# 1. Page Config & Dark Theme
 st.set_page_config(page_title="TradeFinder Pro Live", page_icon="⚡", layout="wide")
 
 st.markdown("""
@@ -30,13 +29,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Load Secrets
 api_key = st.secrets.get("API_KEY", "")
 client_code = st.secrets.get("CLIENT_CODE", "")
 mpin = st.secrets.get("MPIN", "")
 totp_secret = st.secrets.get("TOTP_SECRET", "")
 
-# Top Bar
 c_title, c_tf, c_rr, c_btn = st.columns([3.5, 1, 1, 1])
 with c_title:
     st.markdown("### 💠 TradeFinder Pro Workspace (Intraday Live)")
@@ -48,7 +45,6 @@ with c_btn:
     if st.button("🔄 Refresh Live", use_container_width=True):
         st.cache_data.clear()
 
-# Stock Universe with Sectors & Angel One Tokens
 stocks_info = {
     "RELIANCE.NS": ("RELIANCE-EQ", "2885", "Energy"),
     "ONGC.NS": ("ONGC-EQ", "2475", "Energy"),
@@ -99,7 +95,7 @@ def fetch_global_indices():
                 curr = float(d['Close'].iloc[-1])
                 chg = ((curr - prev) / prev) * 100
                 idx_data[name] = (round(curr, 2), round(chg, 2))
-        except:
+        except Exception:
             pass
     return idx_data
 
@@ -119,7 +115,7 @@ def scan_all_stocks(tf):
                 api_status = "Angel One 0-Sec Live 🟢"
             else:
                 smart_api = None
-        except:
+        except Exception:
             smart_api = None
 
     tickers = list(stocks_info.keys())
@@ -144,7 +140,6 @@ def scan_all_stocks(tf):
             day_high = float(ddf['High'].iloc[-1])
             day_low = float(ddf['Low'].iloc[-1])
 
-            # Sync Exact Live OHLC & LTP from Angel One
             if smart_api:
                 try:
                     ltp_res = smart_api.ltpData("NSE", angel_sym, token)
@@ -157,21 +152,17 @@ def scan_all_stocks(tf):
                             day_low = float(d_live['low'])
                         if float(d_live.get('close', 0)) > 0:
                             prev_close = float(d_live['close'])
-                except:
+                except Exception:
                     pass
 
             change_pct = ((curr_price - prev_close) / prev_close) * 100
-            
-            # Distance from Day High & Day Low (%)
-            dist_high_pct = round(((day_high - curr_price) / day_high) * 100, 2) if day_high > 0 else 99
-            dist_low_pct = round(((curr_price - day_low) / day_low) * 100, 2) if day_low > 0 else 99
+            dist_high_pct = round(((day_high - curr_price) / day_high) * 100, 2) if day_high > 0 else 99.0
+            dist_low_pct = round(((curr_price - day_low) / day_low) * 100, 2) if day_low > 0 else 99.0
 
-            # Volume Boost
             avg_vol = float(df['Volume'].tail(20).mean())
             curr_vol = float(df['Volume'].iloc[-1])
             vol_boost = round(curr_vol / avg_vol, 2) if avg_vol > 0 else 1.0
 
-            # 10-Day & 50-Day Highs
             high_10d = float(ddf['High'].iloc[-11:-1].max())
             high_50d = float(ddf['High'].iloc[-51:-1].max()) if len(ddf) >= 51 else high_10d
 
@@ -179,7 +170,6 @@ def scan_all_stocks(tf):
             rsi_val = float(df['RSI'].iloc[-1])
             atr_val = float(df['ATR'].iloc[-1])
 
-            # Clear Buy / Sell / SL / Target Logic
             if curr_price > ema_val and rsi_val >= 52 and change_pct > 0.3:
                 signal = "🟢 BUY"
                 sl = round(curr_price - (1.5 * atr_val), 2)
@@ -214,12 +204,11 @@ def scan_all_stocks(tf):
                 "BO_10D": curr_price >= (high_10d * 0.995),
                 "BO_50D": curr_price >= (high_50d * 0.995)
             })
-        except:
+        except Exception:
             pass
 
     return pd.DataFrame(results), charts_dict, api_status
 
-# Global Indices Strip
 indices_data = fetch_global_indices()
 if indices_data:
     cols = st.columns(len(indices_data))
@@ -249,7 +238,6 @@ col_cfg = {
 }
 
 if not df.empty:
-    # SECTION 1: MARKET PULSE
     if active_section == "⚡ Market Pulse":
         c1, c2 = st.columns(2)
         with c1:
@@ -257,3 +245,8 @@ if not df.empty:
             gainers = df.sort_values(by="Change (%)", ascending=False).head(10)
             st.dataframe(gainers[["Stock", "TV_Link", "LTP (₹)", "Change (%)", "Signal", "Stop-Loss", "Target"]], column_config=col_cfg, use_container_width=True, hide_index=True)
         with c2:
+            st.subheader("📉 Top 10 Losers (Breakdown)")
+            losers = df.sort_values(by="Change (%)", ascending=True).head(10)
+            st.dataframe(losers[["Stock", "TV_Link", "LTP (₹)", "Change (%)", "Signal", "Stop-Loss", "Target"]], column_config=col_cfg, use_container_width=True, hide_index=True)
+
+        st.divider()
