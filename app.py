@@ -1,4 +1,5 @@
 import time
+import requests
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -9,7 +10,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from SmartApi import SmartConnect
 
-st.set_page_config(page_title="TradeFinder Pro Live", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="TradeFinder Pro (All F&O)", page_icon="⚡", layout="wide")
 
 st.markdown("""
 <style>
@@ -35,53 +36,90 @@ client_code = st.secrets.get("CLIENT_CODE", "")
 mpin = st.secrets.get("MPIN", "")
 totp_secret = st.secrets.get("TOTP_SECRET", "")
 
-# Sidebar: Capital & Risk Management + Auto-Live Settings
+# Sidebar Settings
 st.sidebar.header("💰 Risk & Capital Manager")
-total_capital = st.sidebar.number_input("Total Capital (₹)", min_value=5000, value=100000, step=5000)
+total_capital = st.sidebar.number_input("Total Capital (₹)", min_value=5000, value=30000, step=5000)
 risk_per_trade_pct = st.sidebar.slider("Max Risk Per Trade (%)", 0.5, 5.0, 1.0, 0.5)
 risk_reward = st.sidebar.selectbox("Risk : Reward Ratio", [1.5, 2.0, 2.5, 3.0], index=1)
 timeframe = st.sidebar.selectbox("Scanner Timeframe", ["5m", "15m", "1h"], index=1)
 
 st.sidebar.divider()
 auto_live = st.sidebar.toggle("🔴 Auto-Live Mode (30s Refresh)", value=False)
-st.sidebar.caption("Turn ON during live market (9:15 AM - 3:30 PM IST) for automatic real-time updates.")
+st.sidebar.caption("Scanning ALL ~200+ NSE F&O (Option Chain) Stocks automatically.")
 
 # Top Header
-c_title, c_btn = st.columns([5, 1])
+c_title, c_btn = st.columns([4, 1])
 with c_title:
-    st.markdown("### 💠 TradeFinder Pro Live (VWAP + EMA + Position Sizing)")
+    st.markdown("### 💠 TradeFinder Pro Live (All NSE Option Chain / F&O Stocks)")
 with c_btn:
-    if st.button("🔄 Sync Now", use_container_width=True):
+    if st.button("🔄 Sync All F&O", use_container_width=True):
         st.cache_data.clear()
 
-stocks_info = {
-    "RELIANCE.NS": ("RELIANCE-EQ", "2885", "Energy"),
-    "ONGC.NS": ("ONGC-EQ", "2475", "Energy"),
-    "NTPC.NS": ("NTPC-EQ", "11630", "Energy"),
-    "POWERGRID.NS": ("POWERGRID-EQ", "14977", "Energy"),
-    "TCS.NS": ("TCS-EQ", "11536", "IT"),
-    "INFY.NS": ("INFY-EQ", "1594", "IT"),
-    "WIPRO.NS": ("WIPRO-EQ", "3787", "IT"),
-    "HCLTECH.NS": ("HCLTECH-EQ", "7229", "IT"),
-    "HDFCBANK.NS": ("HDFCBANK-EQ", "1333", "Banking"),
-    "ICICIBANK.NS": ("ICICIBANK-EQ", "4963", "Banking"),
-    "SBIN.NS": ("SBIN-EQ", "3045", "Banking"),
-    "AXISBANK.NS": ("AXISBANK-EQ", "5900", "Banking"),
-    "KOTAKBANK.NS": ("KOTAKBANK-EQ", "1922", "Banking"),
-    "BAJFINANCE.NS": ("BAJFINANCE-EQ", "317", "Finance"),
-    "TATAMOTORS.NS": ("TATAMOTORS-EQ", "3456", "Auto"),
-    "MARUTI.NS": ("MARUTI-EQ", "10999", "Auto"),
-    "M&M.NS": ("M&M-EQ", "2031", "Auto"),
-    "SUNPHARMA.NS": ("SUNPHARMA-EQ", "3351", "Pharma"),
-    "CIPLA.NS": ("CIPLA-EQ", "694", "Pharma"),
-    "TATASTEEL.NS": ("TATASTEEL-EQ", "3499", "Metal"),
-    "HINDALCO.NS": ("HINDALCO-EQ", "1363", "Metal"),
-    "ITC.NS": ("ITC-EQ", "1660", "FMCG"),
-    "HINDUNILVR.NS": ("HINDUNILVR-EQ", "1394", "FMCG"),
-    "LT.NS": ("LT-EQ", "11483", "Infra"),
-    "ADANIENT.NS": ("ADANIENT-EQ", "25", "Infra"),
-    "TITAN.NS": ("TITAN-EQ", "3506", "Consumer")
+# Sector Mapping for F&O Universe
+SECTOR_MAP = {
+    "HDFCBANK": "Banking", "ICICIBANK": "Banking", "SBIN": "Banking", "AXISBANK": "Banking", "KOTAKBANK": "Banking",
+    "INDUSINDBK": "Banking", "BANKBARODA": "Banking", "PNB": "Banking", "CANBK": "Banking", "FEDERALBNK": "Banking",
+    "IDFCFIRSTB": "Banking", "AUBANK": "Banking", "BANDHANBNK": "Banking", "UNIONBANK": "Banking", "INDIANB": "Banking",
+    "BAJFINANCE": "Finance", "BAJAJFINSV": "Finance", "CHOLAFIN": "Finance", "SHRIRAMFIN": "Finance", "MUTHOOTFIN": "Finance",
+    "PFC": "Finance", "RECLTD": "Finance", "SBILIFE": "Finance", "HDFCLIFE": "Finance", "ICICIGI": "Finance",
+    "JIOFIN": "Finance", "ABCAPITAL": "Finance", "LTF": "Finance", "MANAPPURAM": "Finance", "LICHSGFIN": "Finance",
+    "TCS": "IT", "INFY": "IT", "WIPRO": "IT", "HCLTECH": "IT", "TECHM": "IT", "LTIM": "IT", "PERSISTENT": "IT",
+    "COFORGE": "IT", "MPHASIS": "IT", "LTTS": "IT", "KPITTECH": "IT", "TATAELXSI": "IT", "OFSS": "IT",
+    "RELIANCE": "Energy", "ONGC": "Energy", "NTPC": "Energy", "POWERGRID": "Energy", "COALINDIA": "Energy",
+    "TATAPOWER": "Energy", "ADANIGREEN": "Energy", "ADANIENSOL": "Energy", "BPCL": "Energy", "IOC": "Energy",
+    "GAIL": "Energy", "NHPC": "Energy", "SJVN": "Energy", "CESC": "Energy", "PETRONET": "Energy", "IGL": "Energy",
+    "TATAMOTORS": "Auto", "MARUTI": "Auto", "M&M": "Auto", "BAJAJ-AUTO": "Auto", "EICHERMOT": "Auto",
+    "HEROMOTOCO": "Auto", "TVSMOTOR": "Auto", "ASHOKLEY": "Auto", "BHARATFORG": "Auto", "MOTHERSON": "Auto",
+    "BALKRISIND": "Auto", "MRF": "Auto", "APOLLOTYRE": "Auto", "EXIDEIND": "Auto", "BOSCHLTD": "Auto",
+    "SUNPHARMA": "Pharma", "CIPLA": "Pharma", "DRREDDY": "Pharma", "DIVISLAB": "Pharma", "APOLLOHOSP": "Pharma",
+    "LUPIN": "Pharma", "AUROPHARMA": "Pharma", "TORNTPHARM": "Pharma", "ALKEM": "Pharma", "BIOCON": "Pharma",
+    "ZYDUSLIFE": "Pharma", "GLENMARK": "Pharma", "LAURUSLABS": "Pharma", "MAXHEALTH": "Pharma", "FORTIS": "Pharma",
+    "TATASTEEL": "Metal", "HINDALCO": "Metal", "JSWSTEEL": "Metal", "VEDL": "Metal", "JINDALSTEL": "Metal",
+    "NMDC": "Metal", "SAIL": "Metal", "NATIONALUM": "Metal", "HINDCOPPER": "Metal", "HINDZINC": "Metal",
+    "ITC": "FMCG", "HINDUNILVR": "FMCG", "NESTLEIND": "FMCG", "BRITANNIA": "FMCG", "TATACONSUM": "FMCG",
+    "GODREJCP": "FMCG", "DABUR": "FMCG", "MARICO": "FMCG", "COLPAL": "FMCG", "VBL": "FMCG", "UBL": "FMCG",
+    "LT": "Infra & Defence", "ADANIENT": "Infra & Defence", "ADANIPORTS": "Infra & Defence", "HAL": "Infra & Defence",
+    "BEL": "Infra & Defence", "BHEL": "Infra & Defence", "MAZDOCK": "Infra & Defence", "SIEMENS": "Infra & Defence",
+    "ABB": "Infra & Defence", "CUMMINSIND": "Infra & Defence", "CGPOWER": "Infra & Defence", "GMRAIRPORT": "Infra & Defence",
+    "DLF": "Realty", "GODREJPROP": "Realty", "OBEROIRLTY": "Realty", "LODHA": "Realty", "PRESTIGE": "Realty",
+    "TITAN": "Consumer", "TRENT": "Consumer", "ZOMATO": "Consumer", "ETERNAL": "Consumer", "DIXON": "Consumer",
+    "HAVELLS": "Consumer", "VOLTAS": "Consumer", "BLUESTARCO": "Consumer", "PAGEIND": "Consumer", "INDHOTEL": "Consumer",
+    "IRCTC": "Consumer", "INDIGO": "Consumer", "NAUKRI": "Consumer", "DMART": "Consumer", "PAYTM": "Consumer",
+    "ULTRACEMCO": "Cement & Chem", "GRASIM": "Cement & Chem", "AMBUJACEM": "Cement & Chem", "SHREECEM": "Cement & Chem",
+    "ACC": "Cement & Chem", "DALBHARAT": "Cement & Chem", "PIDILITIND": "Cement & Chem", "SRF": "Cement & Chem",
+    "PIIND": "Cement & Chem", "UPL": "Cement & Chem", "DEEPAKNTR": "Cement & Chem", "AARTIIND": "Cement & Chem",
+    "BHARTIARTL": "Telecom", "INDUSTOWER": "Telecom", "IDEA": "Telecom"
 }
+
+@st.cache_data(ttl=86400)
+def get_all_fno_universe():
+    """Fetches all active NSE F&O (Option Chain) stocks dynamically from Angel One Scrip Master"""
+    fno_dict = {}
+    try:
+        url = "https://angelbroking.com"
+        res = requests.get(url, timeout=15).json()
+        df_master = pd.DataFrame(res)
+        # Filter active NFO stock futures/options underlying names
+        nfo_stocks = df_master[(df_master['exch_seg'] == 'NFO') & (df_master['instrumenttype'] == 'FUTSTK')]['name'].unique()
+        nse_eq = df_master[(df_master['exch_seg'] == 'NSE') & (df_master['symbol'].str.endswith('-EQ'))]
+        nse_eq_filtered = nse_eq[nse_eq['name'].isin(nfo_stocks)]
+
+        for _, row in nse_eq_filtered.iterrows():
+            sym = row['name']
+            fno_dict[sym] = {
+                "angel_sym": row['symbol'],
+                "token": str(row['token']),
+                "y_sym": f"{sym}.NS",
+                "sector": SECTOR_MAP.get(sym, "Midcap F&O")
+            }
+    except Exception:
+        pass
+
+    # Fallback if Scrip Master fails
+    if not fno_dict:
+        for sym, sec in SECTOR_MAP.items():
+            fno_dict[sym] = {"angel_sym": f"{sym}-EQ", "token": "", "y_sym": f"{sym}.NS", "sector": sec}
+    return fno_dict
 
 @st.cache_data(ttl=60)
 def fetch_global_indices():
@@ -108,12 +146,14 @@ def fetch_global_indices():
             pass
     return idx_data
 
-@st.cache_data(ttl=25)
-def scan_all_stocks(tf, cap, risk_pct, rr):
+@st.cache_data(ttl=30)
+def scan_all_fno_stocks(tf, cap, risk_pct, rr):
+    fno_universe = get_all_fno_universe()
     results = []
     charts_dict = {}
     smart_api = None
     api_status = "Yahoo Delay Feed 🟡"
+    live_quotes = {}
 
     if api_key and client_code and mpin and totp_secret:
         try:
@@ -121,124 +161,43 @@ def scan_all_stocks(tf, cap, risk_pct, rr):
             totp = pyotp.TOTP(totp_secret).now()
             session = smart_api.generateSession(client_code, mpin, totp)
             if session['status']:
-                api_status = "Angel One 0-Sec Live 🟢"
+                api_status = f"Angel One 0-Sec Live ({len(fno_universe)} F&O Stocks) 🟢"
+                # Batch fetch live market quotes (50 tokens per batch)
+                all_tokens = [v["token"] for v in fno_universe.values() if v["token"]]
+                for i in range(0, len(all_tokens), 50):
+                    batch = all_tokens[i:i+50]
+                    try:
+                        q_res = smart_api.getMarketData("OHLC", {"NSE": batch})
+                        if q_res and q_res.get("status") and "fetched" in q_res.get("data", {}):
+                            for item in q_res["data"]["fetched"]:
+                                live_quotes[str(item["symbolToken"])] = item
+                    except Exception:
+                        pass
             else:
                 smart_api = None
         except Exception:
             smart_api = None
 
-    tickers = list(stocks_info.keys())
-    intraday_bulk = yf.download(tickers, period="5d", interval=tf, group_by='ticker', progress=False)
-    daily_bulk = yf.download(tickers, period="55d", interval="1d", group_by='ticker', progress=False)
+    tickers = [v["y_sym"] for v in fno_universe.values()]
+    intraday_bulk = yf.download(tickers, period="5d", interval=tf, group_by='ticker', progress=False, threads=True)
+    daily_bulk = yf.download(tickers, period="55d", interval="1d", group_by='ticker', progress=False, threads=True)
 
     max_risk_rs = (cap * risk_pct) / 100.0
+    avail_cols = intraday_bulk.columns.get_level_values(0) if isinstance(intraday_bulk.columns, pd.MultiIndex) else []
 
-    for y_sym, (angel_sym, token, sector) in stocks_info.items():
+    for clean_name, info in fno_universe.items():
         try:
-            df = intraday_bulk[y_sym].dropna()
-            ddf = daily_bulk[y_sym].dropna()
-            if len(df) < 25 or len(ddf) < 5:
+            y_sym = info["y_sym"]
+            token = info["token"]
+            sector = info["sector"]
+
+            if y_sym not in avail_cols:
                 continue
 
-            df = df.copy()
+            df = intraday_bulk[y_sym].dropna().copy()
+            ddf = daily_bulk[y_sym].dropna().copy()
+            if len(df) < 22 or len(ddf) < 5:
+                continue
+
             df['EMA_20'] = ta.trend.ema_indicator(df['Close'], window=20)
             df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
-            df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
-            # Calculate Intraday VWAP
-            df['VWAP'] = ta.volume.volume_weighted_average_price(df['High'], df['Low'], df['Close'], df['Volume'], window=14)
-            
-            clean_name = y_sym.replace(".NS", "")
-            charts_dict[clean_name] = df
-
-            prev_close = float(ddf['Close'].iloc[-2])
-            curr_price = float(df['Close'].iloc[-1])
-            day_high = float(ddf['High'].iloc[-1])
-            day_low = float(ddf['Low'].iloc[-1])
-
-            if smart_api:
-                try:
-                    ltp_res = smart_api.ltpData("NSE", angel_sym, token)
-                    if ltp_res['status']:
-                        d_live = ltp_res['data']
-                        curr_price = float(d_live['ltp'])
-                        if float(d_live.get('high', 0)) > 0:
-                            day_high = float(d_live['high'])
-                        if float(d_live.get('low', 0)) > 0:
-                            day_low = float(d_live['low'])
-                        if float(d_live.get('close', 0)) > 0:
-                            prev_close = float(d_live['close'])
-                except Exception:
-                    pass
-
-            change_pct = ((curr_price - prev_close) / prev_close) * 100
-            dist_high_pct = round(((day_high - curr_price) / day_high) * 100, 2) if day_high > 0 else 99.0
-            dist_low_pct = round(((curr_price - day_low) / day_low) * 100, 2) if day_low > 0 else 99.0
-
-            avg_vol = float(df['Volume'].tail(20).mean())
-            curr_vol = float(df['Volume'].iloc[-1])
-            vol_boost = round(curr_vol / avg_vol, 2) if avg_vol > 0 else 1.0
-
-            high_10d = float(ddf['High'].iloc[-11:-1].max())
-            high_50d = float(ddf['High'].iloc[-51:-1].max()) if len(ddf) >= 51 else high_10d
-
-            ema_val = float(df['EMA_20'].iloc[-1])
-            vwap_val = float(df['VWAP'].iloc[-1])
-            rsi_val = float(df['RSI'].iloc[-1])
-            atr_val = float(df['ATR'].iloc[-1])
-
-            vwap_status = "Above VWAP 🟢" if curr_price > vwap_val else "Below VWAP 🔴"
-            sl_points = 1.5 * atr_val
-            safe_qty = int(max_risk_rs / sl_points) if sl_points > 0 else 0
-
-            # Institutional Pro Signal: Price > EMA20 AND Price > VWAP
-            if curr_price > ema_val and curr_price > vwap_val and rsi_val >= 52 and change_pct > 0.3:
-                signal = "🟢 BUY"
-                sl = round(curr_price - sl_points, 2)
-                target = round(curr_price + (sl_points * rr), 2)
-            elif curr_price < ema_val and curr_price < vwap_val and rsi_val <= 48 and change_pct < -0.3:
-                signal = "🔴 SELL"
-                sl = round(curr_price + sl_points, 2)
-                target = round(curr_price - (sl_points * rr), 2)
-            else:
-                signal = "⚪ WAIT"
-                sl, target, safe_qty = 0.0, 0.0, 0
-
-            tv_sym = clean_name.replace("&", "_")
-            # 100% Working Direct TradingView URL
-            tv_url = f"https://tradingview.com{tv_sym}/"
-
-            results.append({
-                "Stock": clean_name,
-                "Sector": sector,
-                "TV_Link": tv_url,
-                "LTP (₹)": round(curr_price, 2),
-                "Day Low": round(day_low, 2),
-                "Day High": round(day_high, 2),
-                "Change (%)": round(change_pct, 2),
-                "VWAP": round(vwap_val, 2),
-                "VWAP Trend": vwap_status,
-                "Vol Boost (x)": vol_boost,
-                "RSI": round(rsi_val, 1),
-                "Signal": signal,
-                "Safe Qty": safe_qty if safe_qty > 0 else "-",
-                "Stop-Loss": sl if sl > 0 else "-",
-                "Target": target if target > 0 else "-",
-                "Dist_High_%": dist_high_pct,
-                "Dist_Low_%": dist_low_pct,
-                "BO_10D": curr_price >= (high_10d * 0.995),
-                "BO_50D": curr_price >= (high_50d * 0.995)
-            })
-        except Exception:
-            pass
-
-    return pd.DataFrame(results), charts_dict, api_status
-
-indices_data = fetch_global_indices()
-if indices_data:
-    cols = st.columns(len(indices_data))
-    for i, (name, (val, chg)) in enumerate(indices_data.items()):
-        cols[i].metric(label=name, value=f"{val:,}", delta=f"{chg}%")
-
-with st.spinner("Syncing Angel One Live OHLC, VWAP & Risk Metrics..."):
-    df, charts_data, status_msg = scan_all_stocks(timeframe, total_capital, risk_per_trade_pct, risk_reward)
-
