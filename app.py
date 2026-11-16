@@ -1,4 +1,4 @@
-import time, os, json, datetime as dt
+import time, os, json, traceback, datetime as dt
 import pandas as pd, pyotp, streamlit as st
 from SmartApi import SmartConnect
 import config as C, strategy as S
@@ -14,26 +14,21 @@ if st.sidebar.button("🔄 Capture Live OI Snapshot"):
 
 @st.cache_resource
 def angel_login():
-    try:
-        if not C.API_KEY or not C.CLIENT_CODE or not C.PIN or not C.TOTP_SECRET:
-            raise RuntimeError("Streamlit Secrets (API_KEY, CLIENT_CODE, MPIN, TOTP_SECRET) are empty!")
-        api = SmartConnect(api_key=C.API_KEY)
-        r = api.generateSession(C.CLIENT_CODE, C.PIN, pyotp.TOTP(C.TOTP_SECRET).now())
-        if not r or not r.get("status"):
-            raise RuntimeError(f"Angel Login Failed: {r}")
-        return api
-    except Exception as e:
-        raise RuntimeError(f"Login Error: {e}")
+    if not C.API_KEY or not C.CLIENT_CODE or not C.PIN or not C.TOTP_SECRET:
+        raise RuntimeError("Streamlit Secrets ખાલી છે! Settings -> Secrets માં API_KEY, CLIENT_CODE, MPIN, TOTP_SECRET નાખો.")
+    api = SmartConnect(api_key=C.API_KEY)
+    r = api.generateSession(C.CLIENT_CODE, C.PIN, pyotp.TOTP(C.TOTP_SECRET).now())
+    if not r or not r.get("status"):
+        raise RuntimeError(f"Angel Login Failed: {r}")
+    return api
 
 @st.cache_data(ttl=86400)
 def get_master():
     if not os.path.exists("master.json"):
-        raise RuntimeError("master.json file not found on GitHub!")
+        raise RuntimeError("GitHub પર master.json ફાઇલ મળી નથી!")
     size_kb = os.path.getsize("master.json") / 1024
     if size_kb < 500:
-        with open("master.json", "r", encoding="utf-8", errors="ignore") as f:
-            preview = f.read(150)
-        raise RuntimeError(f"master.json is invalid/corrupted (Size: {size_kb:.1f} KB). Content starts with: {preview}")
+        raise RuntimeError(f"master.json ફાઇલ ખાલી/ખરાબ છે (સાઇઝ: {size_kb:.1f} KB). ફરીથી ડાઉનલોડ કરીને અપલોડ કરો.")
     with open("master.json", "r", encoding="utf-8") as f:
         data = json.load(f)
     df = pd.DataFrame(data)
@@ -94,7 +89,7 @@ try:
         st.info(f"⏳ Snapshot #1 Captured for **{len(df_snap)} F&O Stocks & Indices**! Click **'🔄 Capture Live OI Snapshot'** once more (after 1 min in live market) to see live OI Change Flow.")
         st.dataframe(df_snap.rename(columns={"CE": "Total Call OI", "PE": "Total Put OI"}), use_container_width=True)
     else:
-        t0, old_oi = st.session_state.oi_history
+        t0, old_oi = st.session_state.oi_history[0]
         t1, new_oi = st.session_state.oi_history[-1]
         diff = (new_oi - old_oi).fillna(0)
         diff["score"] = [S.flow_score(r.get("CE", 0), r.get("PE", 0)) for _, r in diff.iterrows()]
@@ -118,3 +113,4 @@ try:
                      column_config={"TV_Chart": st.column_config.LinkColumn("Chart", display_text="📈 Open")}, use_container_width=True, height=550)
 except Exception as e:
     st.error(f"Error: {e}")
+    st.code(traceback.format_exc())
