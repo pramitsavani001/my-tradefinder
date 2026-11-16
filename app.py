@@ -136,18 +136,82 @@ if idx:
 tech_data, charts = load_base(tf)
 df, status = get_live_df(tech_data, cap, risk_pct, rr)
 
-c_h, c_b = st.columns()
+c_h, c_b = st.columns([4, 1])
 c_h.caption(f"Feed: **{status}** | Auto-Updating Every 5s | Theme: **{st.session_state.theme_mode}** | Chart: **{st.session_state.chart_plat}**")
 if c_b.button("🔄 Reset Cache", use_container_width=True): st.cache_data.clear()
 
 if not df.empty:
-    ql1, ql2 = st.columns()
+    ql1, ql2 = st.columns([3, 1.5])
     sel_stock = ql1.selectbox("Select Stock:", sorted(df["Stock"].tolist()), label_visibility="collapsed")
     tv_s = sel_stock.replace("&", "_").replace("-", "_")
     chart_url = f"https://tradingview.com:{tv_s}" if st.session_state.chart_plat == "TradingView" else "https://angelone.in"
     ql2.link_button(f"↗️ Open {sel_stock} on {st.session_state.chart_plat}", chart_url, use_container_width=True)
 
     if page == "⚙️ Settings":
+        st.subheader("⚙️ Preferences & Settings")
+        s1, s2 = st.columns(2)
+        with s1:
+            st.markdown("#### 🎨 Preferred Display Mode")
+            new_theme = st.radio("Theme", ["Dark", "Light"], index=0 if st.session_state.theme_mode=="Dark" else 1)
+            if new_theme != st.session_state.theme_mode:
+                st.session_state.theme_mode = new_theme
+                st.rerun()
+        with s2:
+            st.markdown("#### 📈 Chart Platform Selection")
+            new_plat = st.radio("Platform", ["TradingView", "Angel One"], index=0 if st.session_state.chart_plat=="TradingView" else 1)
+            if new_plat != st.session_state.chart_plat:
+                st.session_state.chart_plat = new_plat
+                st.rerun()
+
+    elif page == "⚡ Market Pulse":
+        c1, c2 = st.columns(2)
+        c1.subheader("🚀 Top 20 Gainers")
+        c1.dataframe(df.sort_values("Chg %", ascending=False).head(20)[["Stock","LTP","Chg %","Open","High","Low","Signal","Qty","SL","Target"]], use_container_width=True, hide_index=True)
+        c2.subheader("📉 Top 20 Losers")
+        c2.dataframe(df.sort_values("Chg %", ascending=True).head(20)[["Stock","LTP","Chg %","Open","High","Low","Signal","Qty","SL","Target"]], use_container_width=True, hide_index=True)
+        st.divider()
+        b1, b2 = st.columns(2)
+        b1.subheader("💥 Intraday Boost (Volume Spike)")
+        b1.dataframe(df.sort_values("Boost (x)", ascending=False).head(15)[["Stock","Sector","LTP","Chg %","Boost (x)","Signal","Qty","SL","Target"]], use_container_width=True, hide_index=True)
+        b2.subheader("🎯 Breakout Beacon (EMA + Momentum)")
+        b2.dataframe(df[df["Signal"] != "⚪ WAIT"].sort_values("Boost (x)", ascending=False).head(15)[["Stock","Sector","LTP","Chg %","RSI","Signal","Qty","SL","Target"]], use_container_width=True, hide_index=True)
+
+    elif page == "📊 Sector Scope":
+        st.subheader("📊 Sector Scope (Where Institutions Are Buying & Selling)")
+        sec_df = df.groupby("Sector").agg(Avg_Chg=("Chg %", "mean"), Total_Boost=("Boost (x)", "mean"), Stocks=("Stock", "count")).reset_index().sort_values("Avg_Chg", ascending=False)
+        sec_df["Avg_Chg"] = sec_df["Avg_Chg"].round(2)
+        fig_bar = px.bar(sec_df, x="Sector", y="Avg_Chg", color="Avg_Chg", color_continuous_scale=['#ef4444', '#22c55e'], text="Avg_Chg", title="Daily Sector Score (Green = Buying | Red = Selling)")
+        fig_bar.update_layout(height=360, paper_bgcolor=p_bg, template=p_temp)
+        st.plotly_chart(fig_bar, use_container_width=True)
+        sec_sel = st.selectbox("🔍 Drill-Down into Sector Stocks:", sec_df["Sector"].tolist())
+        st.dataframe(df[df["Sector"] == sec_sel].sort_values("Chg %", ascending=False)[["Stock","LTP","Chg %","Boost (x)","RSI","Signal","Qty","SL","Target"]], use_container_width=True, hide_index=True)
+
+    elif page == "🔥 Insider Heatmap":
+        st.subheader("🔥 Live Sector & Stock Momentum Heatmap")
+        df["Box"] = df["Chg %"].abs() + 0.3
+        fig = px.treemap(df, path=['Sector', 'Stock'], values='Box', color='Chg %', color_continuous_scale=['#ef4444', '#64748b', '#22c55e'], color_continuous_midpoint=0, hover_data=['LTP','Boost (x)','Signal'])
+        fig.update_layout(height=550, margin=dict(t=10,l=10,r=10,b=10), paper_bgcolor=p_bg)
+        st.plotly_chart(fig, use_container_width=True)
+
+    elif page == "🏦 FII / DII & Index":
+        st.subheader("🏦 FII / DII Cash Market & Index Activity")
+        f1, f2 = st.columns(2)
+        f1.link_button("↗️ Open Live FII / DII Data on NSE India", "https://nseindia.com", use_container_width=True)
+        f2.link_button("↗️ Open Live Nifty Option Chain (OI / PCR)", "https://nseindia.com", use_container_width=True)
+        st.divider()
+        st.subheader("📈 Nifty 50 & Banking Heavyweights Contribution")
+        heavy = df[df["Sector"].isin(["Banking", "IT", "Energy"])].sort_values("Chg %", ascending=False)
+        st.dataframe(heavy[["Stock","Sector","LTP","Chg %","Boost (x)","Signal","Qty","SL","Target"]], use_container_width=True, hide_index=True)
+
+    elif page == "🕯️ Live Chart & Risk":
+        ri = df[df["Stock"] == sel_stock].iloc[0]
+        m = st.columns(6)
+        m[0].metric("LTP", f"₹{ri['LTP']}", f"{ri['Chg %']}%")
+        m[1].metric("VWAP", f"₹{ri['VWAP']}")
+        m[2].metric("Signal", ri['Signal'])
+        m[3].metric("Safe Qty", f"{ri['Qty']}")
+        m[4].metric("Stop-Loss", f"₹{ri['SL']}")
+        m[5].metric("Target", f"₹{ri['Target']}")
         if sel_stock in charts:
             cdf = charts[sel_stock].tail(75)
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.72, 0.28])
@@ -160,4 +224,3 @@ if not df.empty:
 
 time.sleep(5)
 st.rerun()
-
