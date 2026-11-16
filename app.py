@@ -10,11 +10,9 @@ from SmartApi import SmartConnect
 
 st.set_page_config(page_title="TradeFinder Pro Workspace", page_icon="💠", layout="wide")
 
-# Session State for Settings
 if "theme_mode" not in st.session_state: st.session_state.theme_mode = "Dark"
 if "chart_plat" not in st.session_state: st.session_state.chart_plat = "TradingView"
 
-# Apply High-Contrast Theme CSS
 if st.session_state.theme_mode == "Dark":
     st.markdown("<style>.stApp{background-color:#0b0f19;color:#f8fafc}div[data-testid='stMetric']{background-color:#131a2a;border:1px solid #1e293b;padding:10px;border-radius:10px}</style>", unsafe_allow_html=True)
     p_bg, p_temp = "#0b0f19", "plotly_dark"
@@ -23,13 +21,13 @@ else:
     p_bg, p_temp = "#f8fafc", "plotly_white"
 
 st.sidebar.markdown("## 💠 TradeFinder Pro")
+st.sidebar.success("🔴 LIVE STREAMING (Auto-Updates Every 5s)")
 page = st.sidebar.radio("NAVIGATION", ["⚡ Market Pulse", "📊 Sector Scope", "🔥 Insider Heatmap", "🏦 FII / DII & Index", "🕯️ Live Chart & Risk", "⚙️ Settings"])
 st.sidebar.divider()
 cap = st.sidebar.number_input("Total Capital (₹)", 5000, 5000000, 30000, 5000)
 risk_pct = st.sidebar.slider("Risk / Trade (%)", 0.5, 5.0, 1.0, 0.5)
 rr = st.sidebar.selectbox("Risk : Reward", [1.5, 2.0, 2.5, 3.0], index=1)
 tf = st.sidebar.selectbox("Timeframe", ["5m", "15m", "1h"], index=1)
-ref_sec = st.sidebar.selectbox("Auto-Refresh",, format_func=lambda x: "OFF" if x==0 else f"Every {x}s 🔴")
 
 SEC_MAP = {
     "HDFCBANK":"Banking","ICICIBANK":"Banking","SBIN":"Banking","AXISBANK":"Banking","KOTAKBANK":"Banking","INDUSINDBK":"Banking","BANKBARODA":"Banking","PNB":"Banking","CANBK":"Banking","FEDERALBNK":"Banking","IDFCFIRSTB":"Banking","AUBANK":"Banking",
@@ -127,10 +125,9 @@ def get_live_df(tech, c, r_pct, ratio):
         if ltp > td["ema"] and chg > 0.2: sig, sl, tgt = "🟢 BUY", round(ltp - sl_pts, 2), round(ltp + (sl_pts * ratio), 2)
         elif ltp < td["ema"] and chg < -0.2: sig, sl, tgt = "🔴 SELL", round(ltp + sl_pts, 2), round(ltp - (sl_pts * ratio), 2)
         else: sig, sl, tgt, qty = "⚪ WAIT", "-", "-", "-"
-        rows.append({"Stock":name,"Sector":td["sec"],"LTP":round(ltp,2),"Chg %":round(chg,2),"Open":round(opn,2),"High":round(high,2),"Low":round(low,2),"Signal":sig,"Qty":qty,"SL":sl,"Target":tgt,"Boost (x)":td["vol_b"],"RSI":round(td["rsi"],1),"VWAP":round(td["vwap"],2),"Dist_H":round(((high-ltp)/high)*100,2),"Dist_L":round(((ltp-low)/low)*100,2)})
+        rows.append({"Stock":name,"Sector":td["sec"],"LTP":round(ltp,2),"Chg %":round(chg,2),"Open":round(opn,2),"High":round(high,2),"Low":round(low,2),"Signal":sig,"Qty":qty,"SL":sl,"Target":tgt,"Boost (x)":td["vol_b"],"RSI":round(td["rsi"],1),"VWAP":round(td["vwap"],2)})
     return pd.DataFrame(rows), status
 
-# Top Global Indices Bar
 idx = get_indices()
 if idx:
     cols = st.columns(len(idx))
@@ -140,10 +137,15 @@ tech_data, charts = load_base(tf)
 df, status = get_live_df(tech_data, cap, risk_pct, rr)
 
 c_h, c_b = st.columns()
-c_h.caption(f"Feed: **{status}** | Mode: **{st.session_state.theme_mode}** | Chart Platform: **{st.session_state.chart_plat}**")
-if c_b.button("🔄 Sync Live", use_container_width=True): st.cache_data.clear()
+c_h.caption(f"Feed: **{status}** | Auto-Updating Every 5s | Theme: **{st.session_state.theme_mode}** | Chart: **{st.session_state.chart_plat}**")
+if c_b.button("🔄 Reset Cache", use_container_width=True): st.cache_data.clear()
 
 if not df.empty:
     ql1, ql2 = st.columns()
     sel_stock = ql1.selectbox("Select Stock:", sorted(df["Stock"].tolist()), label_visibility="collapsed")
     tv_s = sel_stock.replace("&", "_").replace("-", "_")
+    chart_url = f"https://tradingview.com:{tv_s}" if st.session_state.chart_plat == "TradingView" else "https://angelone.in"
+    ql2.link_button(f"↗️ Open {sel_stock} on {st.session_state.chart_plat}", chart_url, use_container_width=True)
+
+    if page == "⚙️ Settings":
+
