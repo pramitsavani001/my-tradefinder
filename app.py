@@ -148,4 +148,16 @@ if not df.empty:
     ql2.link_button(f"↗️ Open {sel_stock} on {st.session_state.chart_plat}", chart_url, use_container_width=True)
 
     if page == "⚙️ Settings":
+        if sel_stock in charts:
+            cdf = charts[sel_stock].tail(75)
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.04, row_heights=[0.72, 0.28])
+            fig.add_trace(go.Candlestick(x=cdf.index, open=cdf['Open'], high=cdf['High'], low=cdf['Low'], close=cdf['Close'], name="Price"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=cdf.index, y=cdf['EMA_20'], mode='lines', line=dict(color='#f59e0b', width=2), name="20 EMA"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=cdf.index, y=cdf['VWAP'], mode='lines', line=dict(color='#8b5cf6', width=2, dash='dot'), name="VWAP"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=cdf.index, y=cdf['RSI'], mode='lines', line=dict(color='#0284c7', width=1.8), name="RSI"), row=2, col=1)
+            fig.update_layout(height=520, xaxis_rangeslider_visible=False, template=p_temp, paper_bgcolor=p_bg)
+            st.plotly_chart(fig, use_container_width=True)
+
+time.sleep(5)
+st.rerun()
 
