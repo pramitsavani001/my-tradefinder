@@ -19,7 +19,8 @@ def angel_login():
 
 @st.cache_data(ttl=86400)
 def get_master():
-    res = requests.get("https://angelbroking.com", timeout=45).json()
+    url = "https://angelone.in"
+    res = requests.get(url, timeout=45).json()
     return pd.DataFrame(res)
 
 def fetch_quotes(api, exch, tokens, mode="FULL"):
