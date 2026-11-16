@@ -1,4 +1,4 @@
-import time, traceback, datetime as dt
+import time, re, traceback, datetime as dt
 import pandas as pd, pyotp, streamlit as st
 from SmartApi import SmartConnect
 import config as C, strategy as S
@@ -29,7 +29,7 @@ def build_master(_api):
         if r and r.get("status") and r.get("data"):
             for item in r["data"]:
                 sym = item.get("tradingsymbol", "")
-                if sym.startswith(idx) and (sym.endswith("CE") or sym.endswith("PE")):
+                if re.match(rf"^{re.escape(idx)}\d{{2}}[A-Z]{{3}}\d{{2}}\d+(\.\d+)?(CE|PE)$", sym):
                     rows.append({"token": str(item["symboltoken"]), "symbol": sym, "name": idx, "exch_seg": "NFO"})
     # 2. Fetch All Universe Stocks (Equity + Options)
     for sym_name in C.UNIVERSE:
@@ -45,7 +45,7 @@ def build_master(_api):
         if r_nfo and r_nfo.get("status") and r_nfo.get("data"):
             for item in r_nfo["data"]:
                 tsym = item.get("tradingsymbol", "")
-                if tsym.startswith(sym_name) and (tsym.endswith("CE") or tsym.endswith("PE")):
+                if re.match(rf"^{re.escape(sym_name)}\d{{2}}[A-Z]{{3}}\d{{2}}\d+(\.\d+)?(CE|PE)$", tsym):
                     rows.append({"token": str(item["symboltoken"]), "symbol": tsym, "name": sym_name, "exch_seg": "NFO"})
     return pd.DataFrame(rows)
 
@@ -57,20 +57,13 @@ def fetch_quotes(api, exch, tokens, mode="FULL"):
         if r and r.get("status"): out += r["data"].get("fetched", [])
     return out
 
-def parse_option_symbol(sym, und):
-    rest = sym[len(und):]
-    cp = rest[-2:]
-    exp_str = rest[:7]
-    strike_str = rest[7:-2]
-    return exp_str, float(strike_str), cp
-
 def get_contracts(m, und, spot, n_strikes):
     o = m[(m.exch_seg == "NFO") & (m.name == und)].copy()
     if o.empty: return o
-    parsed = o.symbol.apply(lambda s: parse_option_symbol(s, und))
-    o["exp_str"] = [p[0] for p in parsed]
-    o["k"] = [p[1] for p in parsed]
-    o["cp"] = [p[2] for p in parsed]
+    pat = rf"^{re.escape(und)}(\d{{2}}[A-Z]{{3}}\d{{2}})(\d+(?:\.\d+)?)(CE|PE)$"
+    ext = o.symbol.str.extract(pat)
+    o["exp_str"], o["k"], o["cp"] = ext[0], pd.to_numeric(ext[1], errors="coerce"), ext[2]
+    o = o.dropna(subset=["exp_str", "k", "cp"])
     o["exp"] = pd.to_datetime(o["exp_str"], format="%d%b%y", errors="coerce")
     o = o.dropna(subset=["exp"])
     o = o[o.exp >= pd.Timestamp.today().normalize()]
@@ -86,7 +79,7 @@ if "oi_history" not in st.session_state: st.session_state.oi_history = []
 
 try:
     api = angel_login()
-    with st.spinner("Fetching F&O Contracts directly from Angel One API (First load takes ~1 min, then cached for 24 hrs)..."):
+    with st.spinner("Fetching F&O Contracts directly from Angel One API (First load takes ~1.5 min, then cached for 24 hrs)..."):
         m = build_master(api)
 
     all_fno_names = sorted(m[m.exch_seg == "NFO"].name.unique())
@@ -119,7 +112,7 @@ try:
         st.info(f"⏳ Snapshot #1 Captured for **{len(df_snap)} F&O Stocks & Indices**! Click **'🔄 Capture Live OI Snapshot'** once more (after 1 min in live market) to see live OI Change Flow.")
         st.dataframe(df_snap.rename(columns={"CE": "Total Call OI", "PE": "Total Put OI"}), use_container_width=True)
     else:
-        t0, old_oi = st.session_state.oi_history
+        t0, old_oi = st.session_state.oi_history[0]
         t1, new_oi = st.session_state.oi_history[-1]
         diff = (new_oi - old_oi).fillna(0)
         diff["score"] = [S.flow_score(r.get("CE", 0), r.get("PE", 0)) for _, r in diff.iterrows()]
