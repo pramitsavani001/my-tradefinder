@@ -9,18 +9,40 @@ from plotly.subplots import make_subplots
 from SmartApi import SmartConnect
 
 st.set_page_config(page_title="TradeFinder Pro Workspace", page_icon="💠", layout="wide")
-st.markdown("<style>.stApp{background-color:#f4f7fe;color:#1e293b}div[data-testid='stMetric']{background-color:#ffffff;border:1px solid #e2e8f0;padding:12px;border-radius:12px;box-shadow:0 2px 6px rgba(0,0,0,0.04)}section[data-testid='stSidebar']{background-color:#ffffff;border-right:1px solid #e2e8f0}</style>", unsafe_allow_html=True)
+
+# Session State for Settings
+if "theme_mode" not in st.session_state: st.session_state.theme_mode = "Dark"
+if "chart_plat" not in st.session_state: st.session_state.chart_plat = "TradingView"
+
+# Apply High-Contrast Theme CSS
+if st.session_state.theme_mode == "Dark":
+    st.markdown("<style>.stApp{background-color:#0b0f19;color:#f8fafc}div[data-testid='stMetric']{background-color:#131a2a;border:1px solid #1e293b;padding:10px;border-radius:10px}</style>", unsafe_allow_html=True)
+    p_bg, p_temp = "#0b0f19", "plotly_dark"
+else:
+    st.markdown("<style>.stApp{background-color:#f8fafc;color:#0f172a}section[data-testid='stSidebar']{background-color:#ffffff}div[data-testid='stMetric']{background-color:#ffffff;border:1px solid #cbd5e1;padding:10px;border-radius:10px;color:#0f172a}h1,h2,h3,h4,p,span,label{color:#0f172a !important}</style>", unsafe_allow_html=True)
+    p_bg, p_temp = "#f8fafc", "plotly_white"
 
 st.sidebar.markdown("## 💠 TradeFinder Pro")
-page = st.sidebar.radio("MENU", ["🏠 Home", "⚡ Market Pulse", "🔥 Insider Strategy", "🕯️ Live Chart & Risk"])
+page = st.sidebar.radio("NAVIGATION", ["⚡ Market Pulse", "📊 Sector Scope", "🔥 Insider Heatmap", "🏦 FII / DII & Index", "🕯️ Live Chart & Risk", "⚙️ Settings"])
 st.sidebar.divider()
 cap = st.sidebar.number_input("Total Capital (₹)", 5000, 5000000, 30000, 5000)
 risk_pct = st.sidebar.slider("Risk / Trade (%)", 0.5, 5.0, 1.0, 0.5)
 rr = st.sidebar.selectbox("Risk : Reward", [1.5, 2.0, 2.5, 3.0], index=1)
 tf = st.sidebar.selectbox("Timeframe", ["5m", "15m", "1h"], index=1)
-ref_sec = st.sidebar.selectbox("Auto-Refresh", [0, 5, 10, 30], format_func=lambda x: "OFF" if x==0 else f"Every {x}s 🔴")
+ref_sec = st.sidebar.selectbox("Auto-Refresh",, format_func=lambda x: "OFF" if x==0 else f"Every {x}s 🔴")
 
-ALL_FNO = ["RELIANCE","TCS","HDFCBANK","ICICIBANK","BHARTIARTL","SBIN","INFY","LICI","ITC","HINDUNILVR","LT","BAJFINANCE","HCLTECH","MARUTI","SUNPHARMA","ADANIENT","KOTAKBANK","TITAN","ONGC","TATAMOTORS","NTPC","AXISBANK","ADANIPORTS","ULTRACEMCO","COALINDIA","BAJAJFINSV","BAJAJ-AUTO","HAL","BEL","TRENT","ZOMATO","M&M","POWERGRID","TATASTEEL","JSWSTEEL","SIEMENS","WIPRO","NESTLEIND","IOC","DLF","VBL","JIOFIN","GRASIM","TECHM","HINDALCO","PIDILITIND","LTIM","SBILIFE","HDFCLIFE","INDIGO","BPCL","DIVISLAB","CIPLA","BRITANNIA","EICHERMOT","GODREJCP","TVSMOTOR","GAIL","ABB","CHOLAFIN","BANKBARODA","SHRIRAMFIN","VEDL","PNB","HAVELLS","TATAPOWER","DRREDDY","DABUR","AMBUJACEM","INDUSINDBK","HEROMOTOCO","APOLLOHOSP","TORNTPHARM","ICICIGI","UNIONBANK","CANBK","ZYDUSLIFE","CGPOWER","BHEL","JINDALSTEL","DIXON","MAXHEALTH","PERSISTENT","POLYCAB","CUMMINSIND","NAUKRI","MARICO","MUTHOOTFIN","SRF","COLPAL","LUPIN","AUROPHARMA","IDFCFIRSTB","INDUSTOWER","OBEROIRLTY","FEDERALBNK","ASHOKLEY","TATAELXSI","COFORGE","MPHASIS","PIIND","ASTRAL","HINDPETRO","IRCTC","PETRONET","ALKEM","UPL","CONCOR","VOLTAS","PAGEIND","SAIL","NMDC","BHARATFORG","MOTHERSON","BALKRISIND","MRF","EXIDEIND","BOSCHLTD","BIOCON","GLENMARK","LAURUSLABS","FORTIS","NATIONALUM","HINDCOPPER","UBL","MAZDOCK","GODREJPROP","LODHA","PRESTIGE","INDHOTEL","PAYTM","SHREECEM","ACC","DALBHARAT","DEEPAKNTR","AARTIIND","KPITTECH","LTTS","OFSS","NHPC","SJVN","CESC","IGL","AUBANK","BANDHANBNK","INDIANB","PFC","RECLTD","ABCAPITAL","LTF","MANAPPURAM","LICHSGFIN","IDEA","TATACONSUM","APOLLOTYRE"]
+SEC_MAP = {
+    "HDFCBANK":"Banking","ICICIBANK":"Banking","SBIN":"Banking","AXISBANK":"Banking","KOTAKBANK":"Banking","INDUSINDBK":"Banking","BANKBARODA":"Banking","PNB":"Banking","CANBK":"Banking","FEDERALBNK":"Banking","IDFCFIRSTB":"Banking","AUBANK":"Banking",
+    "BAJFINANCE":"Finance","BAJAJFINSV":"Finance","CHOLAFIN":"Finance","SHRIRAMFIN":"Finance","PFC":"Finance","RECLTD":"Finance","SBILIFE":"Finance","HDFCLIFE":"Finance","JIOFIN":"Finance","MUTHOOTFIN":"Finance","ICICIGI":"Finance",
+    "TCS":"IT","INFY":"IT","WIPRO":"IT","HCLTECH":"IT","TECHM":"IT","LTIM":"IT","PERSISTENT":"IT","COFORGE":"IT","MPHASIS":"IT","KPITTECH":"IT","TATAELXSI":"IT",
+    "RELIANCE":"Energy","ONGC":"Energy","NTPC":"Energy","POWERGRID":"Energy","COALINDIA":"Energy","TATAPOWER":"Energy","ADANIGREEN":"Energy","BPCL":"Energy","IOC":"Energy","GAIL":"Energy","NHPC":"Energy",
+    "TATAMOTORS":"Auto","MARUTI":"Auto","M&M":"Auto","BAJAJ-AUTO":"Auto","EICHERMOT":"Auto","TVSMOTOR":"Auto","ASHOKLEY":"Auto","HEROMOTOCO":"Auto","BHARATFORG":"Auto","MOTHERSON":"Auto",
+    "SUNPHARMA":"Pharma","CIPLA":"Pharma","DRREDDY":"Pharma","DIVISLAB":"Pharma","APOLLOHOSP":"Pharma","LUPIN":"Pharma","AUROPHARMA":"Pharma","TORNTPHARM":"Pharma","ZYDUSLIFE":"Pharma","MAXHEALTH":"Pharma",
+    "TATASTEEL":"Metal","HINDALCO":"Metal","JSWSTEEL":"Metal","VEDL":"Metal","JINDALSTEL":"Metal","NMDC":"Metal","SAIL":"Metal","NATIONALUM":"Metal","HINDCOPPER":"Metal",
+    "ITC":"FMCG","HINDUNILVR":"FMCG","NESTLEIND":"FMCG","BRITANNIA":"FMCG","TATACONSUM":"FMCG","VBL":"FMCG","GODREJCP":"FMCG","DABUR":"FMCG","MARICO":"FMCG",
+    "LT":"Infra & Defence","ADANIENT":"Infra & Defence","ADANIPORTS":"Infra & Defence","HAL":"Infra & Defence","BEL":"Infra & Defence","BHEL":"Infra & Defence","MAZDOCK":"Infra & Defence","SIEMENS":"Infra & Defence","ABB":"Infra & Defence",
+    "DLF":"Realty","GODREJPROP":"Realty","OBEROIRLTY":"Realty","LODHA":"Realty","TITAN":"Consumer","TRENT":"Consumer","ZOMATO":"Consumer","ETERNAL":"Consumer","DIXON":"Consumer","INDIGO":"Consumer","IRCTC":"Consumer","BHARTIARTL":"Telecom"
+}
 
 @st.cache_data(ttl=86400)
 def get_tokens():
@@ -31,18 +53,31 @@ def get_tokens():
     except Exception: pass
     return tmap
 
+@st.cache_data(ttl=60)
+def get_indices():
+    res = {}
+    for n, s in {"NIFTY 50":"^NSEI","BANK NIFTY":"^NSEBANK","INDIA VIX":"^INDIAVIX","DAX":"^GDAXI","DOW":"^DJI","BTC":"BTC-USD"}.items():
+        try:
+            d = yf.download(s, period="2d", interval="1d", progress=False)
+            if isinstance(d.columns, pd.MultiIndex): d.columns = d.columns.get_level_values(0)
+            p, c = float(d['Close'].iloc[-2]), float(d['Close'].iloc[-1])
+            res[n] = (round(c, 2), round(((c - p) / p) * 100, 2))
+        except Exception: pass
+    return res
+
 @st.cache_data(ttl=600)
-def load_base_data(t):
-    tickers = [f"{s}.NS" for s in ALL_FNO]
+def load_base(t):
+    stocks = list(SEC_MAP.keys())
+    tickers = [f"{s}.NS" for s in stocks]
     intra_l, daily_l = [], []
-    for i in range(0, len(tickers), 55):
-        ch = tickers[i:i+55]
+    for i in range(0, len(tickers), 50):
+        ch = tickers[i:i+50]
         intra_l.append(yf.download(ch, period="5d", interval=t, group_by='ticker', progress=False, threads=True))
         daily_l.append(yf.download(ch, period="10d", interval="1d", group_by='ticker', progress=False, threads=True))
     intra, daily = pd.concat(intra_l, axis=1), pd.concat(daily_l, axis=1)
     tech, charts = {}, {}
     cols = intra.columns.get_level_values(0) if isinstance(intra.columns, pd.MultiIndex) else []
-    for name in ALL_FNO:
+    for name in stocks:
         try:
             ysym = f"{name}.NS"
             if ysym not in cols: continue
@@ -54,11 +89,9 @@ def load_base_data(t):
             tp = (df['High'] + df['Low'] + df['Close']) / 3.0
             df['VWAP'] = ((tp * df['Volume']).rolling(14).sum() / df['Volume'].rolling(14).sum()).fillna(df['EMA_20'])
             charts[name] = df
-            avg_v = float(df['Volume'].tail(20).mean())
-            cur_v = float(df['Volume'].iloc[-1])
+            avg_v, cur_v = float(df['Volume'].tail(20).mean()), float(df['Volume'].iloc[-1])
             vol_b = round(cur_v / avg_v, 2) if avg_v > 0 else 1.0
-            spike_5m = ((float(df['Close'].iloc[-1]) - float(df['Open'].iloc[-1])) / float(df['Open'].iloc[-1])) * 100
-            tech[name] = {"ema":float(df['EMA_20'].iloc[-1]),"vwap":float(df['VWAP'].iloc[-1]),"rsi":float(df['RSI'].iloc[-1]),"atr":float(df['ATR'].iloc[-1]),"vol_b":vol_b,"spike":round(spike_5m,2),"open":float(ddf['Open'].iloc[-1]),"high":float(ddf['High'].iloc[-1]),"low":float(ddf['Low'].iloc[-1]),"prev_c":float(ddf['Close'].iloc[-2]),"ltp":float(df['Close'].iloc[-1])}
+            tech[name] = {"sec":SEC_MAP[name],"ema":float(df['EMA_20'].iloc[-1]),"vwap":float(df['VWAP'].iloc[-1]),"rsi":float(df['RSI'].iloc[-1]),"atr":float(df['ATR'].iloc[-1]),"vol_b":vol_b,"open":float(ddf['Open'].iloc[-1]),"high":float(ddf['High'].iloc[-1]),"low":float(ddf['Low'].iloc[-1]),"prev_c":float(ddf['Close'].iloc[-2]),"ltp":float(df['Close'].iloc[-1])}
         except Exception: pass
     return tech, charts
 
@@ -75,7 +108,7 @@ def get_live_df(tech, c, r_pct, ratio):
                     q = api.getMarketData("OHLC", {"NSE": tokens[i:i+50]})
                     if q and q.get("status") and "fetched" in q.get("data", {}):
                         for it in q["data"]["fetched"]: quotes[str(it["symbolToken"])] = it
-                status = f"Angel One Live ({len(quotes)} F&O) 🟢"
+                status = f"Angel One 0-Sec Live ({len(quotes)} F&O) 🟢"
         except Exception: pass
     rows, max_risk = [], (c * r_pct) / 100.0
     for name, td in tech.items():
@@ -94,46 +127,23 @@ def get_live_df(tech, c, r_pct, ratio):
         if ltp > td["ema"] and chg > 0.2: sig, sl, tgt = "🟢 BUY", round(ltp - sl_pts, 2), round(ltp + (sl_pts * ratio), 2)
         elif ltp < td["ema"] and chg < -0.2: sig, sl, tgt = "🔴 SELL", round(ltp + sl_pts, 2), round(ltp - (sl_pts * ratio), 2)
         else: sig, sl, tgt, qty = "⚪ WAIT", "-", "-", "-"
-        rows.append({"Stock":name,"LTP":round(ltp,2),"Chg %":round(chg,2),"Open":round(opn,2),"High":round(high,2),"Low":round(low,2),"Signal":sig,"Qty":qty,"SL":sl,"Target":tgt,"Boost (x)":td["vol_b"],"Spike %":td["spike"],"RSI":round(td["rsi"],1),"VWAP":round(td["vwap"],2),"Dist_H":round(((high-ltp)/high)*100,2),"Dist_L":round(((ltp-low)/low)*100,2)})
+        rows.append({"Stock":name,"Sector":td["sec"],"LTP":round(ltp,2),"Chg %":round(chg,2),"Open":round(opn,2),"High":round(high,2),"Low":round(low,2),"Signal":sig,"Qty":qty,"SL":sl,"Target":tgt,"Boost (x)":td["vol_b"],"RSI":round(td["rsi"],1),"VWAP":round(td["vwap"],2),"Dist_H":round(((high-ltp)/high)*100,2),"Dist_L":round(((ltp-low)/low)*100,2)})
     return pd.DataFrame(rows), status
 
-tech_data, charts = load_base_data(tf)
+# Top Global Indices Bar
+idx = get_indices()
+if idx:
+    cols = st.columns(len(idx))
+    for i, (k, (v, ch)) in enumerate(idx.items()): cols[i].metric(k, f"{v:,}", f"{ch}%")
+
+tech_data, charts = load_base(tf)
 df, status = get_live_df(tech_data, cap, risk_pct, rr)
 
-# Top Global Indices Strip (Like Image 2)
-c_head, c_btn = st.columns([4, 1])
-c_head.markdown(f"### Welcome, pramit | `{status}`")
-if c_btn.button("🔄 Sync Live", use_container_width=True): st.cache_data.clear()
+c_h, c_b = st.columns()
+c_h.caption(f"Feed: **{status}** | Mode: **{st.session_state.theme_mode}** | Chart Platform: **{st.session_state.chart_plat}**")
+if c_b.button("🔄 Sync Live", use_container_width=True): st.cache_data.clear()
 
 if not df.empty:
-    sel_stock = st.selectbox("🔍 Quick Chart Launcher (Select Any F&O Stock):", sorted(df["Stock"].tolist()))
-    tv_clean = sel_stock.replace("&", "_").replace("-", "_")
-    st.link_button(f"↗️ Open {sel_stock} Live Chart on TradingView", f"https://tradingview.com:{tv_clean}")
-
-    if page == "🏠 Home":
-        st.info("👈 Select **⚡ Market Pulse**, **🔥 Insider Strategy**, or **🕯️ Live Chart & Risk** from the left menu (All Pro Tools Unlocked 🔓).")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total F&O Scanned", len(df))
-        m2.metric("Bullish (BUY) Setups", len(df[df["Signal"] == "🟢 BUY"]))
-        m3.metric("Bearish (SELL) Setups", len(df[df["Signal"] == "🔴 SELL"]))
-        m4.metric("Max Risk / Trade", f"₹{int(cap * risk_pct / 100)}")
-
-    elif page == "⚡ Market Pulse":
-        st.markdown("### ⚡ Market Pulse (Live Institutional Scanners)")
-        c1, c2 = st.columns(2)
-        c1.subheader("🚀 Top 20 Gainers")
-        c1.dataframe(df.sort_values("Chg %", ascending=False).head(20)[["Stock","LTP","Chg %","Open","High","Low","Signal","Qty","SL","Target"]], use_container_width=True, hide_index=True)
-        c2.subheader("📉 Top 20 Losers")
-        c2.dataframe(df.sort_values("Chg %", ascending=True).head(20)[["Stock","LTP","Chg %","Open","High","Low","Signal","Qty","SL","Target"]], use_container_width=True, hide_index=True)
-
-        st.divider()
-        b1, b2 = st.columns(2)
-        b1.subheader("💥 Intraday Boost (Volume Spike)")
-        b1.dataframe(df.sort_values("Boost (x)", ascending=False).head(15)[["Stock","LTP","Chg %","Boost (x)","Signal","Qty","SL","Target"]], use_container_width=True, hide_index=True)
-        b2.subheader("🎯 Breakout Beacon (High Momentum)")
-        bo = df[df["Signal"] != "⚪ WAIT"].sort_values("Boost (x)", ascending=False).head(15)
-        b2.dataframe(bo[["Stock","LTP","Chg %","RSI","Signal","Qty","SL","Target"]], use_container_width=True, hide_index=True)
-
-        st.divider()
-        l1, l2 = st.columns(2)
-        l1.subheader("🏔️ Top Level Stocks (Near Day High)")
+    ql1, ql2 = st.columns()
+    sel_stock = ql1.selectbox("Select Stock:", sorted(df["Stock"].tolist()), label_visibility="collapsed")
+    tv_s = sel_stock.replace("&", "_").replace("-", "_")
